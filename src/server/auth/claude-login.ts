@@ -1,36 +1,24 @@
 // Subscription sign-in from the UI — specs/sessions/agent-claude-code.md "サインイン（サブスク）"
-import { spawn } from 'node:child_process';
-import { findClaudeBinary } from './agent.js';
+import { claudeCodeEnv, findClaudeBinary } from './agent.js';
+import { run } from '../exec.js';
 
-let inFlight: Promise<number> | null = null;
-
-export function claudeLoginInProgress(): boolean {
-  return inFlight !== null;
-}
+let inFlight = false;
 
 /**
- * Spawn `claude auth login --claudeai`. Output is NOT forwarded anywhere (it may contain URLs/codes);
- * Claude Code opens the browser itself. Resolves with the exit code.
+ * Start `claude auth login --claudeai` (Claude Code opens the browser itself). Its output is discarded — it may
+ * contain URLs/codes. Rejects right away if a sign-in is running or claude is missing; `done` resolves with the exit code.
  */
 export async function startClaudeLogin(): Promise<{ done: Promise<number> }> {
   if (inFlight) throw new LoginBusyError();
   const binary = await findClaudeBinary();
   if (!binary) throw new Error('Claude Code (`claude`) is not installed; install it, then run `backcourt-duo auth login`.');
-  const env = { ...process.env };
-  delete env['ANTHROPIC_API_KEY'];
-  delete env['ANTHROPIC_AUTH_TOKEN'];
-  inFlight = new Promise<number>((resolve) => {
-    const child = spawn(binary, ['auth', 'login', '--claudeai'], { stdio: ['ignore', 'ignore', 'ignore'], env });
-    const timer = setTimeout(() => child.kill('SIGTERM'), 10 * 60_000);
-    child.on('error', () => resolve(1));
-    child.on('exit', (code) => {
-      clearTimeout(timer);
-      resolve(code ?? 1);
+  inFlight = true;
+  const done = run(binary, ['auth', 'login', '--claudeai'], { env: claudeCodeEnv(), timeoutMs: 10 * 60_000 })
+    .then((r) => r.code)
+    .finally(() => {
+      inFlight = false;
     });
-  }).finally(() => {
-    inFlight = null;
-  });
-  return { done: inFlight };
+  return { done };
 }
 
 export class LoginBusyError extends Error {

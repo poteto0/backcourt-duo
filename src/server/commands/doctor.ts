@@ -1,9 +1,7 @@
 // `backcourt-duo doctor` — specs/commands/doctor.md
 import { createServer } from 'node:net';
-import * as git from '../git.js';
-import { resolveGitHubAuth } from '../auth/github.js';
+import { loadRepoContext, type RepoContext } from './context.js';
 import { resolveAgentAuth, resolveAuthMode } from '../auth/agent.js';
-import { findPullForBranch, getPull } from '../github.js';
 import { style } from '../term.js';
 
 export interface DoctorOptions {
@@ -30,67 +28,57 @@ function portFree(port: number): Promise<boolean> {
   });
 }
 
+function repoChecks(ctx: RepoContext): Check[] {
+  const { target, remote, github, pr } = ctx;
+  const checks: Check[] = [
+    { name: 'git', level: 'ok', message: `repository ${ctx.root}` },
+    { name: 'base', level: 'ok', message: `base ${target.base} (merge-base ${target.mergeBaseSha.slice(0, 7)})` },
+    { name: 'diff', level: ctx.diff.length ? 'ok' : 'warn', message: ctx.diff.length ? `${ctx.diff.length} changed files` : 'no changes vs base' },
+  ];
+  if (!remote || !github) {
+    checks.push({ name: 'remote', level: 'warn', message: 'origin is not a GitHub remote — Submit will be unavailable' });
+    return checks;
+  }
+  checks.push({ name: 'remote', level: 'ok', message: `${remote.host}/${remote.owner}/${remote.repo}` });
+  const a = github.summary;
+  checks.push({ name: 'github-auth', level: a.ready ? 'ok' : 'fail', message: a.ready ? `${a.source}${a.login ? ` (${a.login})` : ''}` : a.hint ?? 'not authenticated' });
+  if (!github.token) return checks;
+  if (ctx.prError) checks.push({ name: 'pr', level: 'warn', message: `PR lookup failed: ${ctx.prError}` });
+  else if (!pr) checks.push({ name: 'pr', level: 'warn', message: 'no open PR for this branch (gh pr create, or --pr <n>)' });
+  else {
+    checks.push({ name: 'pr', level: 'ok', message: `#${pr.number} ${pr.title}` });
+    const pushed = pr.headSha === target.headSha;
+    checks.push({ name: 'pushed', level: pushed ? 'ok' : 'warn', message: pushed ? 'PR head matches local HEAD' : `PR head ${pr.headSha.slice(0, 7)} ≠ local ${target.headSha.slice(0, 7)} — git push` });
+  }
+  return checks;
+}
+
+async function agentChecks(authFlag: string | undefined): Promise<Check[]> {
+  try {
+    const a = (await resolveAgentAuth(resolveAuthMode(authFlag))).summary;
+    return [
+      { name: 'agent-auth', level: a.ready ? 'ok' : 'fail', message: a.ready ? `${a.mode}: ${a.account ?? a.method ?? 'ready'}${a.subscription ? ` (${a.subscription})` : ''}` : `${a.mode}: ${a.hint ?? 'not ready'}` },
+      ...a.warnings.map((w): Check => ({ name: 'agent-auth', level: 'warn', message: w })),
+    ];
+  } catch (err) {
+    return [{ name: 'agent-auth', level: 'fail', message: (err as Error).message }];
+  }
+}
+
 export async function doctorCommand(opts: DoctorOptions): Promise<number> {
-  const checks: Check[] = [];
-  const add = (name: string, level: Level, message: string) => checks.push({ name, level, message });
-
   const major = Number(process.versions.node.split('.')[0]);
-  add('node', major >= 24 ? 'ok' : 'fail', `Node.js ${process.versions.node}${major >= 24 ? '' : ' — need >= 24 (use `nix develop`)'}`);
-
-  let root: string | null = null;
-  try {
-    root = await git.repoRoot(opts.cwd);
-    add('git', 'ok', `repository ${root}`);
-  } catch (err) {
-    add('git', 'fail', (err as Error).message);
-  }
-
-  if (root) {
-    let target: Awaited<ReturnType<typeof git.resolveTarget>> | null = null;
-    try {
-      target = await git.resolveTarget(root, { base: opts.base });
-      add('base', 'ok', `base ${target.base} (merge-base ${target.mergeBaseSha.slice(0, 7)})`);
-    } catch (err) {
-      add('base', 'fail', (err as Error).message);
-    }
-    if (target) {
-      const files = await git.loadDiff(target);
-      add('diff', files.length ? 'ok' : 'warn', files.length ? `${files.length} changed files` : 'no changes vs base');
-    }
-    const url = await git.remoteUrl(root);
-    const remote = url ? git.parseRemoteUrl(url) : null;
-    if (!remote) {
-      add('remote', 'warn', 'origin is not a GitHub remote — Submit will be unavailable');
-    } else {
-      add('remote', 'ok', `${remote.host}/${remote.owner}/${remote.repo}`);
-      const gh = await resolveGitHubAuth(remote.host);
-      add('github-auth', gh.summary.ready ? 'ok' : 'fail', gh.summary.ready ? `${gh.summary.source}${gh.summary.login ? ` (${gh.summary.login})` : ''}` : gh.summary.hint ?? 'not authenticated');
-      if (gh.token && target) {
-        try {
-          const pr = opts.pr !== undefined ? await getPull(gh, remote.owner, remote.repo, opts.pr) : target.branch ? await findPullForBranch(gh, remote.owner, remote.repo, target.branch, root) : null;
-          if (!pr) add('pr', 'warn', 'no open PR for this branch (gh pr create, or --pr <n>)');
-          else {
-            add('pr', 'ok', `#${pr.number} ${pr.title}`);
-            add('pushed', pr.headSha === target.headSha ? 'ok' : 'warn', pr.headSha === target.headSha ? 'PR head matches local HEAD' : `PR head ${pr.headSha.slice(0, 7)} ≠ local ${target.headSha.slice(0, 7)} — git push`);
-          }
-        } catch (err) {
-          add('pr', 'warn', `PR lookup failed: ${(err as Error).message}`);
-        }
-      }
-    }
-  }
-
-  try {
-    const agent = await resolveAgentAuth(resolveAuthMode(opts.auth));
-    const a = agent.summary;
-    add('agent-auth', a.ready ? 'ok' : 'fail', a.ready ? `${a.mode}: ${a.account ?? a.method ?? 'ready'}${a.subscription ? ` (${a.subscription})` : ''}` : `${a.mode}: ${a.hint ?? 'not ready'}`);
-    for (const w of a.warnings) add('agent-auth', 'warn', w);
-  } catch (err) {
-    add('agent-auth', 'fail', (err as Error).message);
-  }
-
-  const free = await portFree(opts.port);
-  add('port', free ? 'ok' : 'fail', free ? `port ${opts.port} is free` : `port ${opts.port} is in use (--port)`);
+  // Independent checks run concurrently.
+  const [repo, agent, free] = await Promise.all([
+    loadRepoContext(opts).then(repoChecks, (err: Error): Check[] => [{ name: 'git', level: 'fail', message: err.message }]),
+    agentChecks(opts.auth),
+    portFree(opts.port),
+  ]);
+  const checks: Check[] = [
+    { name: 'node', level: major >= 24 ? 'ok' : 'fail', message: `Node.js ${process.versions.node}${major >= 24 ? '' : ' — need >= 24 (use `nix develop`)'}` },
+    ...repo,
+    ...agent,
+    { name: 'port', level: free ? 'ok' : 'fail', message: free ? `port ${opts.port} is free` : `port ${opts.port} is in use (--port)` },
+  ];
 
   if (opts.json) {
     console.log(JSON.stringify(checks, null, 2));

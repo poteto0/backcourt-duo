@@ -112,11 +112,13 @@ export async function loadDiff(target: ReviewTarget): Promise<DiffFile[]> {
   if (target.uncommitted) {
     // Untracked files are invisible to `git diff`; include them as additions.
     const untracked = (await git(target.repoRoot, ['ls-files', '--others', '--exclude-standard'], true)).split('\n').filter(Boolean);
-    for (const path of untracked) {
-      const r = await run('git', ['diff', '--no-color', '--no-index', '--src-prefix=a/', '--dst-prefix=b/', '/dev/null', path], { cwd: target.repoRoot });
-      const parsed = parseUnifiedDiff(r.stdout);
-      for (const f of parsed) files.push({ ...f, path, status: 'added' });
-    }
+    const added = await Promise.all(
+      untracked.map(async (path) => {
+        const r = await run('git', ['diff', '--no-color', '--no-index', '--src-prefix=a/', '--dst-prefix=b/', '/dev/null', path], { cwd: target.repoRoot });
+        return parseUnifiedDiff(r.stdout).map((f) => ({ ...f, path, status: 'added' as const }));
+      }),
+    );
+    files.push(...added.flat());
   }
   files.sort((a, b) => a.path.localeCompare(b.path));
   return files;

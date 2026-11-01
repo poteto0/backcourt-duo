@@ -1,4 +1,6 @@
 import { execFile, spawn } from 'node:child_process';
+import { access, constants } from 'node:fs/promises';
+import { delimiter, join } from 'node:path';
 
 export interface ExecResult {
   code: number;
@@ -9,8 +11,7 @@ export interface ExecResult {
 export interface ExecOptions {
   cwd?: string;
   timeoutMs?: number;
-  env?: NodeJS.ProcessEnv;
-  maxBuffer?: number;
+  env?: NodeJS.ProcessEnv | Record<string, string | undefined>;
 }
 
 /** Run a command without a shell. Never throws on non-zero exit; throws only when the binary is missing. */
@@ -23,7 +24,7 @@ export function run(cmd: string, args: readonly string[], opts: ExecOptions = {}
         cwd: opts.cwd,
         timeout: opts.timeoutMs ?? 30_000,
         env: opts.env ?? process.env,
-        maxBuffer: opts.maxBuffer ?? 256 * 1024 * 1024,
+        maxBuffer: 256 * 1024 * 1024,
         encoding: 'utf8',
         windowsHide: true,
       },
@@ -56,12 +57,20 @@ export function runInteractive(cmd: string, args: readonly string[], opts: { cwd
   });
 }
 
-/** Locate an executable on PATH (no shell). */
-export async function which(name: string): Promise<string | null> {
-  const path = process.env['PATH'] ?? '';
-  const { access, constants } = await import('node:fs/promises');
-  const { join, delimiter } = await import('node:path');
-  for (const dir of path.split(delimiter)) {
+const whichCache = new Map<string, Promise<string | null>>();
+
+/** Locate an executable on PATH (no shell). Memoised for the life of the process. */
+export function which(name: string): Promise<string | null> {
+  let hit = whichCache.get(name);
+  if (!hit) {
+    hit = findOnPath(name);
+    whichCache.set(name, hit);
+  }
+  return hit;
+}
+
+async function findOnPath(name: string): Promise<string | null> {
+  for (const dir of (process.env['PATH'] ?? '').split(delimiter)) {
     if (!dir) continue;
     const candidate = join(dir, name);
     try {

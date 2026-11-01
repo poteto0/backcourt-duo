@@ -9,11 +9,11 @@ import { z } from 'zod';
 import { SESSION_COOKIE, type LocalSession } from './auth/local.js';
 import { StoreError, type ReviewStore } from './store.js';
 import type { AgentSession } from './agent/session.js';
-import { resolveAgentAuth } from './auth/agent.js';
-import { claudeLoginInProgress, LoginBusyError, startClaudeLogin } from './auth/claude-login.js';
+import { LoginBusyError } from './auth/claude-login.js';
 import { GitHubError, submitReview } from './github.js';
 import type { ResolvedGitHubAuth } from './auth/github.js';
-import type { AgentAuthMode, ChatEvent, HelloEvent, ReviewStateSnapshot } from '../shared/types.js';
+import type { AgentAuthMode, HelloEvent } from '../shared/types.js';
+import { CursorSchema, PendingCreateSchema, ReviewEventSchema, ReviewStateSchema } from './schemas.js';
 import { VERSION } from './version.js';
 
 export interface AppDeps {
@@ -35,16 +35,6 @@ const MIME: Record<string, string> = {
   '.json': 'application/json',
   '.woff2': 'font/woff2',
 };
-
-const sideSchema = z.enum(['LEFT', 'RIGHT']);
-const presenceSchema = z
-  .object({ path: z.string(), startLine: z.number().int().positive().optional(), endLine: z.number().int().positive().optional(), side: sideSchema.optional() })
-  .nullable();
-const pendingCreate = z.object({ path: z.string(), line: z.number().int().positive(), startLine: z.number().int().positive().optional(), side: sideSchema.optional(), body: z.string().min(1) });
-
-function strip<T extends Record<string, unknown>>(o: T): { [K in keyof T]: Exclude<T[K], undefined> } {
-  return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as { [K in keyof T]: Exclude<T[K], undefined> };
-}
 
 export function createApp(deps: AppDeps): Hono {
   const { store, session } = deps;
@@ -101,8 +91,8 @@ export function createApp(deps: AppDeps): Hono {
       const hello: HelloEvent = { version: VERSION, bootId };
       await stream.writeSSE({ event: 'hello', data: JSON.stringify(hello) });
       await stream.writeSSE({ event: 'state', data: JSON.stringify(store.snapshot()) });
-      const onState = (s: ReviewStateSnapshot) => void stream.writeSSE({ event: 'state', data: JSON.stringify(s) });
-      const onChat = (e: ChatEvent) => void stream.writeSSE({ event: 'chat', data: JSON.stringify(e) });
+      const onState = (data: string) => void stream.writeSSE({ event: 'state', data });
+      const onChat = (data: string) => void stream.writeSSE({ event: 'chat', data });
       store.on('state', onState);
       store.on('chat', onChat);
       const keepAlive = setInterval(() => void stream.write(': keep-alive\n\n'), 15_000);
@@ -131,8 +121,7 @@ export function createApp(deps: AppDeps): Hono {
 
   // ------------------------------------------------------------ presence / files
   app.put('/api/presence', async (c) => {
-    const cur = await body(c, presenceSchema);
-    store.setCursor('human', cur ? strip(cur) : null);
+    store.setCursor('human', await body(c, CursorSchema.nullable()));
     return c.json({ ok: true });
   });
   app.put('/api/follow', async (c) => {
@@ -141,15 +130,15 @@ export function createApp(deps: AppDeps): Hono {
     return c.json({ ok: true });
   });
   app.put('/api/files/review-state', async (c) => {
-    const { path, reviewState } = await body(c, z.object({ path: z.string(), reviewState: z.enum(['unvisited', 'in-progress', 'reviewed']) }));
+    const { path, reviewState } = await body(c, z.object({ path: z.string(), reviewState: ReviewStateSchema }));
     store.setReviewState(path, reviewState, 'human');
     return c.json({ ok: true });
   });
 
   // ------------------------------------------------------------ pending
   app.post('/api/pending', async (c) => {
-    const input = await body(c, pendingCreate);
-    return c.json(store.addPending({ ...strip(input), author: 'human' }));
+    const input = await body(c, PendingCreateSchema);
+    return c.json(store.addPending({ ...input, author: 'human' }));
   });
   app.patch('/api/pending/:id', async (c) => {
     const { body: text } = await body(c, z.object({ body: z.string().min(1) }));
@@ -159,7 +148,7 @@ export function createApp(deps: AppDeps): Hono {
 
   // ------------------------------------------------------------ submit
   app.post('/api/submit', async (c) => {
-    const { event, body: reviewBody } = await body(c, z.object({ event: z.enum(['COMMENT', 'APPROVE', 'REQUEST_CHANGES']), body: z.string().max(65_000) }));
+    const { event, body: reviewBody } = await body(c, z.object({ event: ReviewEventSchema, body: z.string().max(65_000) }));
     const pr = store.pr;
     const { owner, repo } = store.github;
     if (!pr || !owner || !repo) return c.json({ error: 'No pull request to submit to.' }, 409);
@@ -177,29 +166,14 @@ export function createApp(deps: AppDeps): Hono {
   });
 
   // ------------------------------------------------------------ auth
-  app.get('/api/auth', (c) => c.json({ agent: store.agent.auth, github: store.github.auth, loginInProgress: claudeLoginInProgress() }));
   app.post('/api/auth/claude/login', async (c) => {
     if (deps.authMode !== 'claude-code') return c.json({ error: 'sign-in is only used in claude-code mode' }, 409);
-    let done: Promise<number>;
+    if (!deps.agent) return c.json({ error: 'agent disabled (--no-agent)' }, 409);
     try {
-      ({ done } = await startClaudeLogin());
+      await deps.agent.signIn();
     } catch (err) {
-      if (err instanceof LoginBusyError) return c.json({ error: err.message }, 409);
-      return c.json({ error: (err as Error).message }, 500);
+      return c.json({ error: (err as Error).message }, err instanceof LoginBusyError ? 409 : 500);
     }
-    store.setAgent({ loginInProgress: true });
-    store.appendChat(store.makeMessage('system', '🔐 Opening Claude sign-in in your browser…'));
-    void done.then(async (code) => {
-      store.setAgent({ loginInProgress: false });
-      const auth = await resolveAgentAuth(deps.authMode);
-      store.setAgent({ auth: auth.summary });
-      if (auth.summary.ready) {
-        store.appendChat(store.makeMessage('system', `✅ Signed in${auth.summary.account ? ` as ${auth.summary.account}` : ''}. Starting the agent…`));
-        await deps.agent?.restart();
-      } else {
-        store.appendChat(store.makeMessage('system', `Sign-in did not complete (exit ${code}). You can also run \`backcourt-duo auth login\` in a terminal.`));
-      }
-    });
     return c.json({ ok: true });
   });
 

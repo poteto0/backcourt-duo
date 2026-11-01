@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { loadRepoContext } from './context.js';
-import { loadDiff, GitError } from '../git.js';
+import { GitError } from '../git.js';
 import { ReviewStore } from '../store.js';
 import { LocalSession, isLoopbackHost } from '../auth/local.js';
 import { resolveAuthMode } from '../auth/agent.js';
@@ -45,8 +45,7 @@ export async function startCommand(opts: StartOptions): Promise<number> {
     }
     throw err;
   }
-  const { target } = ctx;
-  const diff = await loadDiff(target);
+  const { target, diff } = ctx;
   console.log(`${style.bold('🏀 backcourt-duo')} ${style.dim(`v${VERSION}`)}`);
   console.log(`   ${style.dim('diff')}  ${target.base} ${style.dim(`(${target.mergeBaseSha.slice(0, 7)})`)} … ${target.head}${target.branch ? ` [${target.branch}]` : ''}${target.uncommitted ? ' + uncommitted' : ''}`);
   if (diff.length === 0) {
@@ -69,7 +68,7 @@ export async function startCommand(opts: StartOptions): Promise<number> {
 
   const session = new LocalSession(opts.port);
   const agent = opts.agent ? new AgentSession(store, { authMode, model: opts.model }) : null;
-  if (!agent) store.setAgent({ status: 'disabled' });
+  if (!agent) store.setAgentStatus('disabled');
 
   const webRoot = join(PACKAGE_ROOT, 'dist', 'web');
   if (!existsSync(join(webRoot, 'index.html'))) console.log(style.yellow(`   web UI not built at ${webRoot} — run \`pnpm build\``));

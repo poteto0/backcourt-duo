@@ -1,4 +1,4 @@
-import type { DiffFile, DiffHunk, DiffLine, FileStatus, Side } from '../shared/types.js';
+import type { DiffFile, DiffHunk, Side } from '../shared/types.js';
 
 const HUNK_RE = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@ ?(.*)$/;
 
@@ -130,27 +130,23 @@ export function parseUnifiedDiff(text: string): DiffFile[] {
   return files;
 }
 
-/** Is (side,line) inside a hunk, i.e. commentable on GitHub? */
-export function isCommentable(file: DiffFile, side: Side, line: number): boolean {
-  return file.hunks.some((h) =>
-    h.lines.some((l: DiffLine) => (side === 'RIGHT' ? l.kind !== 'del' && l.newLine === line : l.kind !== 'add' && l.oldLine === line)),
-  );
+const hunkHasLine = (h: DiffHunk, side: Side, n: number) =>
+  h.lines.some((l) => (side === 'RIGHT' ? l.kind !== 'del' && l.newLine === n : l.kind !== 'add' && l.oldLine === n));
+
+/** Both ends of a (multi-line) comment must be in the same hunk on GitHub. */
+export function isCommentableRange(file: DiffFile, side: Side, start: number, end: number): boolean {
+  return file.hunks.some((h) => hunkHasLine(h, side, start) && hunkHasLine(h, side, end));
 }
 
-/** Both ends of a multi-line comment must be in the same hunk on GitHub. */
-export function isCommentableRange(file: DiffFile, side: Side, start: number, end: number): boolean {
-  return file.hunks.some((h) => {
-    const has = (n: number) =>
-      h.lines.some((l) => (side === 'RIGHT' ? l.kind !== 'del' && l.newLine === n : l.kind !== 'add' && l.oldLine === n));
-    return has(start) && has(end);
-  });
+/** Is (side,line) inside a hunk, i.e. commentable on GitHub? */
+export function isCommentable(file: DiffFile, side: Side, line: number): boolean {
+  return isCommentableRange(file, side, line, line);
 }
 
 /** Compact text rendering for the agent: every line annotated with old/new numbers. */
 export function renderFileDiffForAgent(file: DiffFile, maxLines = 1500): string {
   const out: string[] = [];
-  const status: Record<FileStatus, string> = { added: 'added', modified: 'modified', deleted: 'deleted', renamed: 'renamed', copied: 'copied' };
-  out.push(`# ${file.path} (${status[file.status]}${file.oldPath ? ` from ${file.oldPath}` : ''}, +${file.additions} -${file.deletions})`);
+  out.push(`# ${file.path} (${file.status}${file.oldPath ? ` from ${file.oldPath}` : ''}, +${file.additions} -${file.deletions})`);
   if (file.binary) {
     out.push('(binary file — no textual diff)');
     return out.join('\n');

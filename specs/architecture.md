@@ -94,5 +94,4 @@ UI の操作:
 | PATCH | `/api/pending/:id` | 本文の編集 |
 | DELETE | `/api/pending/:id` | 削除 |
 | POST | `/api/submit` | `{ event: 'COMMENT'|'APPROVE'|'REQUEST_CHANGES', body }` PR に投稿 |
-| GET | `/api/auth` | エージェント認証と GitHub 認証の状態 |
 | POST | `/api/auth/claude/login` | `claude auth login --claudeai` を起動する（サブスクでのサインイン） |

@@ -43,8 +43,7 @@ export function wrapHumanMessage(store: ReviewStore, text: string): string {
   const h = store.presence.human;
   const lines: string[] = ['<human_context>'];
   if (h) {
-    const ref = formatRef({ path: h.path, ...(h.startLine !== undefined ? { startLine: h.startLine } : {}), ...(h.endLine !== undefined ? { endLine: h.endLine } : {}) });
-    lines.push(`viewing: ${ref}${h.side === 'LEFT' ? ' (LEFT/old side)' : ''}`);
+    lines.push(`viewing: ${formatRef(h)}${h.side === 'LEFT' ? ' (LEFT/old side)' : ''}`);
   } else {
     lines.push('viewing: (overview, no file selected)');
   }

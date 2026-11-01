@@ -9,13 +9,13 @@ export interface ResolvedGitHubAuth {
   apiBase: string;
 }
 
-export function apiBaseFor(host: string): string {
+function apiBaseFor(host: string): string {
   const override = process.env['BACKCOURT_DUO_GITHUB_API_URL'];
   if (override) return override.replace(/\/$/, '');
   return host === 'github.com' ? 'https://api.github.com' : `https://${host}/api/v3`;
 }
 
-export async function resolveGitHubAuth(host: string, opts: { fetchLogin?: boolean } = {}): Promise<ResolvedGitHubAuth> {
+export async function resolveGitHubAuth(host: string): Promise<ResolvedGitHubAuth> {
   const apiBase = apiBaseFor(host);
   let token: string | null = null;
   let source: GitHubAuthSummary['source'];
@@ -41,7 +41,7 @@ export async function resolveGitHubAuth(host: string, opts: { fetchLogin?: boole
   }
   const summary: GitHubAuthSummary = { ready: true, host };
   if (source) summary.source = source;
-  if (opts.fetchLogin !== false) {
+  {
     try {
       const res = await fetch(`${apiBase}/user`, { headers: ghHeaders(token), signal: AbortSignal.timeout(10_000) });
       if (res.ok) {

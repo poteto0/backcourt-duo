@@ -30,7 +30,7 @@ export interface DiffHunk {
 
 export interface DiffFile {
   path: string;
-  oldPath?: string;
+  oldPath?: string | undefined;
   status: FileStatus;
   binary: boolean;
   additions: number;
@@ -42,7 +42,7 @@ export type ReviewState = 'unvisited' | 'in-progress' | 'reviewed';
 
 export interface FileEntry {
   path: string;
-  oldPath?: string;
+  oldPath?: string | undefined;
   status: FileStatus;
   additions: number;
   deletions: number;
@@ -55,12 +55,14 @@ export type Actor = 'human' | 'agent';
 
 export interface Cursor {
   path: string;
-  startLine?: number;
-  endLine?: number;
-  side?: Side;
-  note?: string;
+  startLine?: number | undefined;
+  endLine?: number | undefined;
+  side?: Side | undefined;
+  note?: string | undefined;
   at: string;
 }
+
+export type CursorInput = Omit<Cursor, 'at'>;
 
 export interface Presence {
   human: Cursor | null;
@@ -88,7 +90,7 @@ export interface PendingComment {
   path: string;
   side: Side;
   line: number;
-  startLine?: number;
+  startLine?: number | undefined;
   body: string;
   author: Actor;
   editedByHuman?: boolean;
@@ -165,6 +167,12 @@ export interface Warning {
   message: string;
 }
 
+export interface GitHubContext {
+  auth: GitHubAuthSummary | null;
+  owner: string | null;
+  repo: string | null;
+}
+
 export interface ReviewStateSnapshot {
   target: ReviewTarget;
   pr: PullRequestInfo | null;
@@ -175,7 +183,7 @@ export interface ReviewStateSnapshot {
   followAgent: boolean;
   pending: PendingComment[];
   agent: AgentInfo;
-  github: { auth: GitHubAuthSummary | null; owner: string | null; repo: string | null };
+  github: GitHubContext;
   lastSubmission: Submission | null;
   warnings: Warning[];
 }
@@ -192,17 +200,14 @@ export interface ChatMessage {
   at: string;
   /** Agent message still streaming. */
   streaming?: boolean;
-  /** For tool rows: tool name and a compact JSON input summary. */
-  tool?: { name: string; summary: string; ref?: Cursor; isError?: boolean };
-  /** Synthetic messages (kickoff) are shown in a muted style. */
-  synthetic?: boolean;
+  /** For tool rows: a one-line summary, optionally linking to a location. */
+  tool?: { summary: string; ref?: Ref | undefined; isError?: boolean };
 }
 
 export type ChatEvent =
   | { type: 'append'; message: ChatMessage }
   | { type: 'delta'; id: string; text: string }
-  | { type: 'update'; message: ChatMessage }
-  | { type: 'reset'; messages: ChatMessage[] };
+  | { type: 'update'; message: ChatMessage };
 
 export interface HelloEvent {
   version: string;
@@ -216,8 +221,13 @@ export const REF_PATTERN = /@([A-Za-z0-9_][A-Za-z0-9_./\-]*[A-Za-z0-9_])(?:#L(\d
 
 export interface Ref {
   path: string;
-  startLine?: number;
-  endLine?: number;
+  startLine?: number | undefined;
+  endLine?: number | undefined;
+}
+
+/** The location a pending comment covers, as a shared reference. */
+export function commentRef(c: Pick<PendingComment, 'path' | 'line' | 'startLine'>): Ref {
+  return { path: c.path, startLine: c.startLine ?? c.line, endLine: c.line };
 }
 
 export function formatRef(ref: Ref): string {

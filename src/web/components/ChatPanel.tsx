@@ -1,9 +1,8 @@
-import { createEffect, createSignal, For, Match, on, Show, Switch } from 'solid-js';
+import { createEffect, createSignal, For, Match, on, onCleanup, Show, Switch } from 'solid-js';
 import type { ChatMessage } from '../../shared/types';
 import { api, ApiError } from '../api';
 import { renderMarkdown } from '../markdown';
-import { chat, composerInsert, openFile, selection, snap, viewPath } from '../store';
-import { formatRef } from '../../shared/types';
+import { chat, composerInsert, hereRef, openFile, snap } from '../store';
 import { onRefClick } from './refs';
 
 const STATUS_LABEL: Record<string, string> = {
@@ -70,13 +69,6 @@ export function ChatPanel() {
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     }
-  };
-
-  const hereRef = () => {
-    const p = viewPath();
-    if (!p) return null;
-    const sel = selection();
-    return sel && sel.path === p ? formatRef({ path: p, startLine: sel.start, endLine: sel.end }) : formatRef({ path: p });
   };
 
   return (
@@ -197,7 +189,7 @@ function Message(props: { m: ChatMessage }) {
         <div classList={{ toolrow: true, error: !!props.m.tool?.isError }}>
           <Show when={props.m.tool?.ref} fallback={<span>{props.m.tool?.summary}</span>}>
             {(ref) => (
-              <button class="linklike" onClick={() => openFile(ref().path, ref().startLine !== undefined ? { line: ref().startLine!, ...(ref().endLine !== undefined ? { endLine: ref().endLine! } : {}), select: false } : {})}>
+              <button class="linklike" onClick={() => openFile(ref().path, { line: ref().startLine, endLine: ref().endLine, select: false })}>
                 {props.m.tool?.summary}
               </button>
             )}
@@ -215,9 +207,29 @@ function Message(props: { m: ChatMessage }) {
       <Match when={props.m.role === 'agent'}>
         <div classList={{ msg: true, agent: true, streaming: !!props.m.streaming }}>
           <span class="who agent">🤖</span>
-          <div class="bubble md" innerHTML={renderMarkdown(props.m.text)} />
+          <div class="bubble md" innerHTML={streamedMarkdown(() => props.m.text)()} />
         </div>
       </Match>
     </Switch>
   );
+}
+
+/**
+ * Markdown for a message that grows token by token: re-render at most once per animation frame instead of
+ * re-parsing the whole message on every delta.
+ */
+function streamedMarkdown(text: () => string): () => string {
+  const [html, setHtml] = createSignal(renderMarkdown(text()));
+  let frame = 0;
+  createEffect(
+    on(text, () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        setHtml(renderMarkdown(text()));
+      });
+    }, { defer: true }),
+  );
+  onCleanup(() => cancelAnimationFrame(frame));
+  return html;
 }

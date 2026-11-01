@@ -3,7 +3,8 @@ import { createInterface } from 'node:readline/promises';
 import { findClaudeBinary, resolveAgentAuth, resolveAuthMode } from '../auth/agent.js';
 import { resolveGitHubAuth } from '../auth/github.js';
 import { CommandNotFoundError, runInteractive, which } from '../exec.js';
-import { parseRemoteUrl, remoteUrl, repoRoot } from '../git.js';
+import { repoRoot } from '../git.js';
+import { remoteRepo } from './context.js';
 import { style } from '../term.js';
 
 export interface AuthOptions {
@@ -18,8 +19,7 @@ export interface AuthOptions {
 
 async function githubHost(cwd: string): Promise<string> {
   try {
-    const url = await remoteUrl(await repoRoot(cwd));
-    return (url && parseRemoteUrl(url)?.host) || 'github.com';
+    return (await remoteRepo(await repoRoot(cwd)))?.host ?? 'github.com';
   } catch {
     return 'github.com';
   }

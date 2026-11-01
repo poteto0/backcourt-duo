@@ -1,8 +1,9 @@
 // Client-side mirror of the server ReviewStore + local view state.
-import { batch, createSignal } from 'solid-js';
+import { batch, createMemo, createRoot, createSignal } from 'solid-js';
 import { createStore, produce, reconcile } from 'solid-js/store';
 import { api, connectEvents } from './api';
 import type { ChatEvent, ChatMessage, Cursor, DiffFile, ReviewStateSnapshot, Side } from '../shared/types';
+import { formatRef } from '../shared/types';
 
 export interface Selection {
   path: string;
@@ -20,7 +21,7 @@ const [viewPath, setViewPathRaw] = createSignal<string | null>(null);
 /** Human line selection (synced to presence). */
 const [selection, setSelectionRaw] = createSignal<Selection | null>(null);
 /** Increments to ask DiffView to scroll to a line. */
-const [scrollRequest, setScrollRequest] = createSignal<{ path: string; line?: number; side?: Side; seq: number } | null>(null);
+const [scrollRequest, setScrollRequest] = createSignal<{ path: string; line?: number | undefined; side?: Side | undefined; seq: number } | null>(null);
 /** Text to insert into the chat composer. */
 const [composerInsert, setComposerInsert] = createSignal<{ text: string; seq: number } | null>(null);
 
@@ -32,6 +33,20 @@ let lastAgentAt: string | null = null;
 
 export const snap = () => state.s;
 
+/** The human selection when it is on the file being viewed, else null. */
+export const currentSelection = createRoot(() => createMemo(() => {
+  const sel = selection();
+  return sel && sel.path === viewPath() ? sel : null;
+}));
+
+/** `@path#Lx-Ly` for what the human is looking at (shared by the diff header and the chat composer). */
+export const hereRef = createRoot(() => createMemo(() => {
+  const path = viewPath();
+  if (!path) return null;
+  const sel = currentSelection();
+  return formatRef(sel ? { path, startLine: sel.start, endLine: sel.end } : { path });
+}));
+
 // ------------------------------------------------------------ presence sync (debounced)
 let presenceTimer: ReturnType<typeof setTimeout> | undefined;
 function pushPresence(): void {
@@ -39,15 +54,9 @@ function pushPresence(): void {
   presenceTimer = setTimeout(() => {
     const path = viewPath();
     if (!path) return void api.presence(null).catch(() => undefined);
-    const sel = selection();
-    const body: { path: string; startLine?: number; endLine?: number; side?: Side } = { path };
-    if (sel && sel.path === path) {
-      body.startLine = sel.start;
-      body.endLine = sel.end;
-      body.side = sel.side;
-    }
-    void api.presence(body).catch(() => undefined);
-    writeHash(path, sel && sel.path === path ? sel : null);
+    const sel = currentSelection();
+    void api.presence(sel ? { path, startLine: sel.start, endLine: sel.end, side: sel.side } : { path }).catch(() => undefined);
+    writeHash(path, sel);
   }, 250);
 }
 
@@ -68,7 +77,7 @@ function readHash(): { path: string; sel: Selection | null } | null {
 }
 
 /** Human navigates to a file (and optionally a line). Turning off follow mode when diverging from the agent. */
-export function openFile(path: string, opts: { line?: number; endLine?: number; side?: Side; fromAgent?: boolean; select?: boolean } = {}): void {
+export function openFile(path: string, opts: { line?: number | undefined; endLine?: number | undefined; side?: Side | undefined; fromAgent?: boolean; select?: boolean } = {}): void {
   batch(() => {
     setViewPathRaw(path);
     if (opts.line !== undefined && opts.select !== false) {
@@ -76,7 +85,7 @@ export function openFile(path: string, opts: { line?: number; endLine?: number; 
     } else if (selection()?.path !== path) {
       setSelectionRaw(null);
     }
-    setScrollRequest({ path, ...(opts.line !== undefined ? { line: opts.line } : {}), ...(opts.side ? { side: opts.side } : {}), seq: ++seq });
+    setScrollRequest({ path, line: opts.line, side: opts.side, seq: ++seq });
   });
   const s = state.s;
   if (!opts.fromAgent && s?.followAgent && s.presence.agent && s.presence.agent.path !== path) {
@@ -101,7 +110,7 @@ export function setFollow(v: boolean): void {
 }
 
 function followCursor(a: Cursor): void {
-  openFile(a.path, { ...(a.startLine !== undefined ? { line: a.startLine, select: false } : {}), ...(a.side ? { side: a.side } : {}), fromAgent: true });
+  openFile(a.path, { line: a.startLine, side: a.side, select: false, fromAgent: true });
 }
 
 // ------------------------------------------------------------ server events
@@ -118,27 +127,18 @@ function applyState(s: ReviewStateSnapshot): void {
   }
 }
 
+/** Streaming targets are almost always the newest messages: search from the end. */
+const chatIndex = (id: string) => chat.messages.findLastIndex((m) => m.id === id);
+
 function applyChat(e: ChatEvent): void {
-  switch (e.type) {
-    case 'append':
-      setChat('messages', (m) => [...m, e.message]);
-      break;
-    case 'delta':
-      setChat(
-        'messages',
-        (m) => m.id === e.id,
-        produce((m) => {
-          m.text += e.text;
-        }),
-      );
-      break;
-    case 'update':
-      setChat('messages', (m) => m.id === e.message.id, reconcile(e.message));
-      break;
-    case 'reset':
-      setChat('messages', e.messages);
-      break;
+  if (e.type === 'append') {
+    setChat('messages', chat.messages.length, e.message);
+    return;
   }
+  const idx = chatIndex(e.type === 'delta' ? e.id : e.message.id);
+  if (idx < 0) return;
+  if (e.type === 'delta') setChat('messages', idx, 'text', (t) => t + e.text);
+  else setChat('messages', idx, reconcile(e.message));
 }
 
 export async function boot(): Promise<void> {
@@ -149,7 +149,7 @@ export async function boot(): Promise<void> {
   if (fromHash && d.some((f) => f.path === fromHash.path)) {
     setViewPathRaw(fromHash.path);
     if (fromHash.sel) setSelectionRaw(fromHash.sel);
-    setScrollRequest({ path: fromHash.path, ...(fromHash.sel ? { line: fromHash.sel.start, side: fromHash.sel.side } : {}), seq: ++seq });
+    setScrollRequest({ path: fromHash.path, line: fromHash.sel?.start, side: fromHash.sel?.side, seq: ++seq });
   }
   connectEvents({
     hello: (h) => {

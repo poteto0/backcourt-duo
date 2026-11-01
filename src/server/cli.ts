@@ -80,6 +80,7 @@ export async function main(argv: string[]): Promise<number> {
   const [command = 'start', sub] = positionals;
 
   try {
+    const port = intOption('port', v.port ?? process.env['BACKCOURT_DUO_PORT']) ?? 1200;
     switch (command) {
       case 'start': {
         const { startCommand } = await import('./commands/start.js');
@@ -89,7 +90,7 @@ export async function main(argv: string[]): Promise<number> {
           head: v.head,
           pr: intOption('pr', v.pr),
           uncommitted: v.uncommitted,
-          port: intOption('port', v.port ?? process.env['BACKCOURT_DUO_PORT']) ?? 1200,
+          port,
           host: v.host,
           auth: v.auth,
           model: v.model,
@@ -108,7 +109,7 @@ export async function main(argv: string[]): Promise<number> {
       }
       case 'doctor': {
         const { doctorCommand } = await import('./commands/doctor.js');
-        return await doctorCommand({ cwd, base: v.base, pr: intOption('pr', v.pr), port: intOption('port', v.port ?? process.env['BACKCOURT_DUO_PORT']) ?? 1200, auth: v.auth, json: v.json });
+        return await doctorCommand({ cwd, base: v.base, pr: intOption('pr', v.pr), port, auth: v.auth, json: v.json });
       }
       case 'help':
         console.log(HELP);

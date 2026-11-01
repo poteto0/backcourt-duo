@@ -1,11 +1,11 @@
 // Tiny, safe Markdown → HTML for chat. Everything is escaped first; only a fixed set of tags is produced.
-import { parseRefs } from '../shared/types';
+import { formatRef, parseRefs, type Ref } from '../shared/types';
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-function refChip(path: string, start?: number, end?: number): string {
-  const label = `${path}${start !== undefined ? `#L${start}${end !== undefined && end !== start ? `-L${end}` : ''}` : ''}`;
-  return `<button type="button" class="ref" data-path="${esc(path)}"${start !== undefined ? ` data-start="${start}"` : ''}${end !== undefined ? ` data-end="${end}"` : ''}>${esc(label)}</button>`;
+function refChip(ref: Ref): string {
+  const data = `${ref.startLine !== undefined ? ` data-start="${ref.startLine}"` : ''}${ref.endLine !== undefined ? ` data-end="${ref.endLine}"` : ''}`;
+  return `<button type="button" class="ref" data-path="${esc(ref.path)}"${data}>${esc(formatRef(ref).slice(1))}</button>`;
 }
 
 /** Inline formatting on raw (unescaped) text. */
@@ -18,8 +18,7 @@ function inline(raw: string): string {
         const code = part.slice(1, -1);
         const refs = parseRefs(code);
         if (refs.length === 1 && refs[0]!.index === 0 && refs[0]!.length === code.length) {
-          const r = refs[0]!.ref;
-          return refChip(r.path, r.startLine, r.endLine);
+          return refChip(refs[0]!.ref);
         }
         return `<code>${esc(code)}</code>`;
       }
@@ -27,7 +26,7 @@ function inline(raw: string): string {
       let last = 0;
       for (const r of parseRefs(part)) {
         out += fmt(part.slice(last, r.index));
-        out += refChip(r.ref.path, r.ref.startLine, r.ref.endLine);
+        out += refChip(r.ref);
         last = r.index + r.length;
       }
       out += fmt(part.slice(last));

@@ -7,14 +7,16 @@ import { isCommentable, isCommentableRange } from './diff.js';
 import type {
   Actor,
   AgentInfo,
+  AgentStatus,
   ChatEvent,
   ChatMessage,
-  Cursor,
+  CursorInput,
   DiffFile,
   FileEntry,
-  GitHubAuthSummary,
+  GitHubContext,
   PendingComment,
   Phase,
+  Presence,
   PullRequestInfo,
   ReviewPlan,
   ReviewState,
@@ -24,7 +26,7 @@ import type {
   Submission,
   Warning,
 } from '../shared/types.js';
-import { formatRef } from '../shared/types.js';
+import { commentRef, formatRef } from '../shared/types.js';
 
 interface Persisted {
   version: 1;
@@ -43,17 +45,18 @@ export class StoreError extends Error {}
 
 const now = () => new Date().toISOString();
 
-export class ReviewStore extends EventEmitter<{ state: [ReviewStateSnapshot]; chat: [ChatEvent] }> {
+/** Events carry pre-serialised JSON so N SSE clients cost one JSON.stringify. */
+export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] }> {
   readonly diffByPath = new Map<string, DiffFile>();
   files: FileEntry[];
   pr: PullRequestInfo | null = null;
   plan: ReviewPlan | null = null;
   phase: Phase = 'preparing';
-  presence: { human: Cursor | null; agent: Cursor | null } = { human: null, agent: null };
+  presence: Presence = { human: null, agent: null };
   followAgent = true;
   pending: PendingComment[] = [];
   agent: AgentInfo = { status: 'starting', auth: null, loginInProgress: false };
-  github: { auth: GitHubAuthSummary | null; owner: string | null; repo: string | null } = { auth: null, owner: null, repo: null };
+  github: GitHubContext = { auth: null, owner: null, repo: null };
   lastSubmission: Submission | null = null;
   chat: ChatMessage[] = [];
   agentSessionId: string | null = null;
@@ -71,9 +74,7 @@ export class ReviewStore extends EventEmitter<{ state: [ReviewStateSnapshot]; ch
     super();
     for (const f of diff) this.diffByPath.set(f.path, f);
     this.files = diff.map((f) => {
-      const e: FileEntry = { path: f.path, status: f.status, additions: f.additions, deletions: f.deletions, binary: f.binary, reviewState: 'unvisited' };
-      if (f.oldPath) e.oldPath = f.oldPath;
-      return e;
+      return { path: f.path, oldPath: f.oldPath, status: f.status, additions: f.additions, deletions: f.deletions, binary: f.binary, reviewState: 'unvisited' } satisfies FileEntry;
     });
   }
 
@@ -123,7 +124,7 @@ export class ReviewStore extends EventEmitter<{ state: [ReviewStateSnapshot]; ch
     if (!this.emitTimer) {
       this.emitTimer = setTimeout(() => {
         this.emitTimer = null;
-        this.emit('state', this.snapshot());
+        this.emit('state', JSON.stringify(this.snapshot()));
       }, 30);
     }
     if (opts.persist !== false) this.scheduleSave();
@@ -188,7 +189,7 @@ export class ReviewStore extends EventEmitter<{ state: [ReviewStateSnapshot]; ch
     const dir = join(this.statePath, '..');
     await mkdir(dir, { recursive: true });
     const tmp = `${this.statePath}.${process.pid}.tmp`;
-    await writeFile(tmp, JSON.stringify(data, null, 2));
+    await writeFile(tmp, JSON.stringify(data));
     await rename(tmp, this.statePath);
   }
 
@@ -231,17 +232,18 @@ export class ReviewStore extends EventEmitter<{ state: [ReviewStateSnapshot]; ch
     this.changed();
   }
 
-  setCursor(who: Actor, cursor: Omit<Cursor, 'at'> | null): void {
-    if (cursor) this.requireFile(cursor.path);
+  setCursor(who: Actor, cursor: CursorInput | null): void {
     const prev = this.presence[who];
-    const next: Cursor | null = cursor ? { ...cursor, at: now() } : null;
-    this.presence = { ...this.presence, [who]: next };
-    if (who === 'agent' && next) {
-      const f = this.requireFile(next.path);
-      if (f.reviewState === 'unvisited') f.reviewState = 'in-progress';
+    if (cursor) {
+      const f = this.requireFile(cursor.path);
+      if (who === 'agent' && f.reviewState === 'unvisited') f.reviewState = 'in-progress';
+      if (who === 'human' && prev?.path !== cursor.path) this.logActivity(`opened ${formatRef({ path: cursor.path })}`);
     }
-    if (who === 'human' && next && prev?.path !== next.path) this.logActivity(`opened ${formatRef({ path: next.path })}`);
-    this.changed({ persist: who === 'agent' });
+    // A single start line means a one-line range, whoever sets it.
+    const next = cursor ? { ...cursor, endLine: cursor.endLine ?? cursor.startLine, at: now() } : null;
+    this.presence = { ...this.presence, [who]: next };
+    // Presence is not persisted; only the agent's in-progress promotion is.
+    this.changed({ persist: who === 'agent' && prev?.path !== cursor?.path });
   }
 
   setFollowAgent(v: boolean): void {
@@ -267,9 +269,15 @@ export class ReviewStore extends EventEmitter<{ state: [ReviewStateSnapshot]; ch
     this.changed();
   }
 
-  setAgent(patch: Partial<AgentInfo>): void {
+  /** Status transitions replace the error: it is set exactly when given. */
+  setAgentStatus(status: AgentStatus, error?: string): void {
+    const { error: _old, ...rest } = this.agent;
+    this.agent = error === undefined ? { ...rest, status } : { ...rest, status, error };
+    this.changed({ persist: false });
+  }
+
+  setAgent(patch: Partial<Omit<AgentInfo, 'status' | 'error'>>): void {
     this.agent = { ...this.agent, ...patch };
-    if (patch.status && patch.status !== 'error' && patch.status !== 'signed-out' && !('error' in patch)) delete this.agent.error;
     this.changed({ persist: false });
   }
 
@@ -292,16 +300,16 @@ export class ReviewStore extends EventEmitter<{ state: [ReviewStateSnapshot]; ch
     return null;
   }
 
-  addPending(input: { path: string; side?: Side; line: number; startLine?: number; body: string; author: Actor }): PendingComment {
+  addPending(input: { path: string; side?: Side | undefined; line: number; startLine?: number | undefined; body: string; author: Actor }): PendingComment {
     const side = input.side ?? 'RIGHT';
     const body = input.body.trim();
     if (!body) throw new StoreError('comment body is empty');
     const err = this.validateLocation(input.path, side, input.line, input.startLine);
     if (err) throw new StoreError(err);
-    const c: PendingComment = { id: `c_${++this.seq}_${randomUUID().slice(0, 6)}`, path: input.path, side, line: input.line, body, author: input.author, createdAt: now(), updatedAt: now() };
-    if (input.startLine !== undefined && input.startLine !== input.line) c.startLine = input.startLine;
+    const startLine = input.startLine !== undefined && input.startLine !== input.line ? input.startLine : undefined;
+    const c: PendingComment = { id: `c_${++this.seq}_${randomUUID().slice(0, 6)}`, path: input.path, side, line: input.line, startLine, body, author: input.author, createdAt: now(), updatedAt: now() };
     this.pending = [...this.pending, c];
-    if (input.author === 'human') this.logActivity(`added pending comment ${c.id} on ${formatRef({ path: c.path, startLine: c.startLine ?? c.line, endLine: c.line })}: "${truncate(body, 120)}"`);
+    if (input.author === 'human') this.logActivity(`added pending comment ${c.id} on ${formatRef(commentRef(c))}: "${truncate(body, 120)}"`);
     this.changed();
     return c;
   }
@@ -323,7 +331,7 @@ export class ReviewStore extends EventEmitter<{ state: [ReviewStateSnapshot]; ch
     const c = this.pending.find((x) => x.id === id);
     if (!c) throw new StoreError(`no pending comment ${id}`);
     this.pending = this.pending.filter((x) => x.id !== id);
-    if (by === 'human') this.logActivity(`deleted pending comment ${id} (${c.author}) on ${formatRef({ path: c.path, startLine: c.line })}`);
+    if (by === 'human') this.logActivity(`deleted pending comment ${id} (${c.author}) on ${formatRef(commentRef(c))}`);
     this.changed();
     return c;
   }
@@ -344,25 +352,34 @@ export class ReviewStore extends EventEmitter<{ state: [ReviewStateSnapshot]; ch
   appendChat(msg: ChatMessage): ChatMessage {
     this.chat.push(msg);
     if (this.chat.length > 2000) this.chat.splice(0, this.chat.length - 2000);
-    this.emit('chat', { type: 'append', message: msg });
+    this.emitChat({ type: 'append', message: msg });
     if (!msg.streaming) this.scheduleSave();
     return msg;
   }
 
+  /** Streaming targets are almost always the newest messages: search from the end. */
+  private chatIndex(id: string): number {
+    return this.chat.findLastIndex((m) => m.id === id);
+  }
+
   chatDelta(id: string, text: string): void {
-    const m = this.chat.find((x) => x.id === id);
+    const m = this.chat[this.chatIndex(id)];
     if (!m) return;
     m.text += text;
-    this.emit('chat', { type: 'delta', id, text });
+    this.emitChat({ type: 'delta', id, text });
   }
 
   updateChat(id: string, patch: Partial<ChatMessage>): void {
-    const idx = this.chat.findIndex((x) => x.id === id);
+    const idx = this.chatIndex(id);
     if (idx < 0) return;
     const m = { ...this.chat[idx]!, ...patch };
     this.chat[idx] = m;
-    this.emit('chat', { type: 'update', message: m });
+    this.emitChat({ type: 'update', message: m });
     this.scheduleSave();
+  }
+
+  private emitChat(e: ChatEvent): void {
+    this.emit('chat', JSON.stringify(e));
   }
 
   setAgentSessionId(id: string): void {

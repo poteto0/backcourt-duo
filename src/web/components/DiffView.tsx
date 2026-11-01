@@ -3,7 +3,7 @@ import type { DiffFile, DiffLine, PendingComment, Side } from '../../shared/type
 import { formatRef } from '../../shared/types';
 import { api, ApiError } from '../api';
 import { renderMarkdown } from '../markdown';
-import { diff, insertIntoComposer, openFile, scrollRequest, selection, setFollow, setSelection, snap, viewPath } from '../store';
+import { currentSelection, diff, hereRef, insertIntoComposer, openFile, scrollRequest, setFollow, setSelection, snap, viewPath } from '../store';
 import { onRefClick } from './refs';
 
 interface LineKey {
@@ -42,10 +42,20 @@ export function DiffView() {
     return k.line >= a.startLine && k.line <= (a.endLine ?? a.startLine);
   };
   const inSelection = (k: LineKey) => {
-    const sel = selection();
-    return !!sel && sel.path === viewPath() && sel.side === k.side && k.line >= sel.start && k.line <= sel.end;
+    const sel = currentSelection();
+    return !!sel && sel.side === k.side && k.line >= sel.start && k.line <= sel.end;
   };
-  const commentsAt = (k: LineKey): PendingComment[] => s().pending.filter((c) => c.path === viewPath() && c.side === k.side && c.line === k.line);
+  /** Pending comments of the viewed file, grouped by line key — one pass instead of a scan per row. */
+  const commentsByKey = createMemo(() => {
+    const m = new Map<string, PendingComment[]>();
+    for (const c of s().pending) {
+      if (c.path !== viewPath()) continue;
+      const k = keyStr(c);
+      m.set(k, [...(m.get(k) ?? []), c]);
+    }
+    return m;
+  });
+  const commentsAt = (k: LineKey): PendingComment[] => commentsByKey().get(keyStr(k)) ?? [];
 
   // Scroll on navigation requests (human clicks, follow-agent).
   createEffect(
@@ -67,10 +77,10 @@ export function DiffView() {
   const clickLine = (k: LineKey, e: MouseEvent) => {
     const path = viewPath();
     if (!path) return;
-    const sel = selection();
-    if (e.shiftKey && sel && sel.path === path && sel.side === k.side) {
+    const sel = currentSelection();
+    if (e.shiftKey && sel && sel.side === k.side) {
       setSelection({ path, side: k.side, start: Math.min(sel.start, k.line), end: Math.max(sel.end, k.line) });
-    } else if (sel && sel.path === path && sel.side === k.side && sel.start === k.line && sel.end === k.line) {
+    } else if (sel && sel.side === k.side && sel.start === k.line && sel.end === k.line) {
       setSelection(null);
     } else {
       setSelection({ path, side: k.side, start: k.line, end: k.line });
@@ -78,17 +88,8 @@ export function DiffView() {
   };
 
   const startComment = (k: LineKey) => {
-    const sel = selection();
-    if (sel && sel.path === viewPath() && sel.side === k.side && k.line >= sel.start && k.line <= sel.end) setDraft({ side: k.side, start: sel.start, end: sel.end });
-    else setDraft({ side: k.side, start: k.line, end: k.line });
-  };
-
-  const selectionRef = () => {
-    const sel = selection();
-    const path = viewPath();
-    if (!path) return '';
-    if (!sel || sel.path !== path) return formatRef({ path });
-    return formatRef({ path, startLine: sel.start, endLine: sel.end });
+    const sel = currentSelection();
+    setDraft(sel && inSelection(k) ? { side: k.side, start: sel.start, end: sel.end } : { side: k.side, start: k.line, end: k.line });
   };
 
   const idx = () => order().indexOf(viewPath() ?? '');
@@ -105,8 +106,8 @@ export function DiffView() {
           fallback={<span class="muted">🤖 The agent hasn’t opened a file yet</span>}
         >
           {(a) => (
-            <button class="agent-loc" onClick={() => openFile(a().path, { ...(a().startLine !== undefined ? { line: a().startLine!, select: false } : {}), fromAgent: true })}>
-              <span class="who agent">🤖</span> Agent is on <code>{formatRef({ path: a().path, ...(a().startLine !== undefined ? { startLine: a().startLine! } : {}), ...(a().endLine !== undefined ? { endLine: a().endLine! } : {}) })}</code>
+            <button class="agent-loc" onClick={() => openFile(a().path, { line: a().startLine, side: a().side, select: false, fromAgent: true })}>
+              <span class="who agent">🤖</span> Agent is on <code>{formatRef(a())}</code>
               <Show when={a().note}>
                 <span class="note">— {a().note}</span>
               </Show>
@@ -145,8 +146,8 @@ export function DiffView() {
                   {(p) => <span class={`plan-note prio-${p().priority}`} title={p().note}>{p().note}</span>}
                 </Show>
               </div>
-              <button class="btn" onClick={() => insertIntoComposer(`${selectionRef()} `)} title="Reference the current file/selection in the chat">
-                Ask agent about {selection()?.path === f().path ? 'selection' : 'file'}
+              <button class="btn" onClick={() => insertIntoComposer(`${hereRef()} `)} title="Reference the current file/selection in the chat">
+                Ask agent about {currentSelection() ? 'selection' : 'file'}
               </button>
               <label class="viewed">
                 <input
@@ -245,7 +246,7 @@ function CommentForm(props: { draft: Draft; path: string; onDone: () => void }) 
         path: props.path,
         side: props.draft.side,
         line: props.draft.end,
-        ...(props.draft.start !== props.draft.end ? { startLine: props.draft.start } : {}),
+        startLine: props.draft.start,
         body: text(),
       });
       props.onDone();
@@ -287,7 +288,7 @@ function CommentForm(props: { draft: Draft; path: string; onDone: () => void }) 
   );
 }
 
-export function Comment(props: { c: PendingComment; compact?: boolean }) {
+function Comment(props: { c: PendingComment }) {
   const [editing, setEditing] = createSignal(false);
   const [text, setText] = createSignal(props.c.body);
   const save = async () => {

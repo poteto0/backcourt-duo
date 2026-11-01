@@ -20,5 +20,5 @@ export function onRefClick(e: MouseEvent): void {
   }
   const start = el.dataset['start'] ? Number(el.dataset['start']) : undefined;
   const end = el.dataset['end'] ? Number(el.dataset['end']) : undefined;
-  openFile(path, start !== undefined ? { line: start, ...(end !== undefined ? { endLine: end } : {}) } : {});
+  openFile(path, { line: start, endLine: end });
 }

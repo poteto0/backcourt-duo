@@ -23,7 +23,17 @@ export async function findClaudeBinary(): Promise<string | null> {
   return which('claude');
 }
 
-export function maskSecret(v: string): string {
+/** Credentials that would shadow the Claude Code sign-in (specs/sessions/agent-claude-code.md). */
+const SHADOWING_KEYS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'] as const;
+
+/** Environment for any `claude` subprocess that must use the user's Claude Code sign-in. */
+export function claudeCodeEnv(base: NodeJS.ProcessEnv = process.env): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = { ...base, CLAUDE_AGENT_SDK_CLIENT_APP: `backcourt-duo/${VERSION}` };
+  for (const key of SHADOWING_KEYS) delete env[key];
+  return env;
+}
+
+function maskSecret(v: string): string {
   if (v.length <= 12) return '…';
   return `${v.slice(0, 7)}…${v.slice(-4)}`;
 }
@@ -36,12 +46,9 @@ interface ClaudeAuthStatusJson {
   subscriptionType?: string;
 }
 
-export async function claudeAuthStatus(binary: string): Promise<{ ok: true; status: ClaudeAuthStatusJson } | { ok: false; error: string }> {
+async function claudeAuthStatus(binary: string): Promise<{ ok: true; status: ClaudeAuthStatusJson } | { ok: false; error: string }> {
   try {
-    const env = { ...process.env };
-    delete env['ANTHROPIC_API_KEY'];
-    delete env['ANTHROPIC_AUTH_TOKEN'];
-    const r = await run(binary, ['auth', 'status', '--json'], { timeoutMs: 10_000, env });
+    const r = await run(binary, ['auth', 'status', '--json'], { timeoutMs: 10_000, env: claudeCodeEnv() });
     const text = r.stdout.trim();
     if (text.startsWith('{')) return { ok: true, status: JSON.parse(text) as ClaudeAuthStatusJson };
     return { ok: false, error: (r.stderr || r.stdout).trim().split('\n')[0] ?? `exit ${r.code}` };
@@ -51,19 +58,9 @@ export async function claudeAuthStatus(binary: string): Promise<{ ok: true; stat
   }
 }
 
-function baseEnv(): Record<string, string | undefined> {
-  return { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: `backcourt-duo/${VERSION}` };
-}
-
 async function resolveClaudeCode(): Promise<ResolvedAgentAuth> {
-  const warnings: string[] = [];
-  const env = baseEnv();
-  for (const key of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'] as const) {
-    if (env[key]) {
-      warnings.push(`${key} is set but ignored in claude-code mode (use --auth api-key to use it)`);
-      delete env[key];
-    }
-  }
+  const warnings = SHADOWING_KEYS.filter((key) => process.env[key]).map((key) => `${key} is set but ignored in claude-code mode (use --auth api-key to use it)`);
+  const env = claudeCodeEnv();
   const binary = await findClaudeBinary();
   if (!binary) {
     return {
@@ -91,7 +88,7 @@ async function resolveClaudeCode(): Promise<ResolvedAgentAuth> {
 }
 
 function resolveApiKey(): ResolvedAgentAuth {
-  const env = baseEnv();
+  const env: Record<string, string | undefined> = { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: `backcourt-duo/${VERSION}` };
   const warnings: string[] = [];
   delete env['CLAUDE_CODE_USE_BEDROCK'];
   delete env['CLAUDE_CODE_USE_VERTEX'];
@@ -131,7 +128,14 @@ export async function resolveAgentAuth(mode: AgentAuthMode): Promise<ResolvedAge
   return resolveClaudeCode();
 }
 
-/** Errors coming back from the agent that mean "you need to sign in again". */
+/** Typed SDK errors that mean "sign in again" rather than "try again". */
+const SIGN_IN_ERRORS = new Set<string>(['authentication_failed', 'oauth_org_not_allowed']);
+
+export function isSignInError(code: string | undefined): boolean {
+  return code !== undefined && SIGN_IN_ERRORS.has(code);
+}
+
+/** Fallback for untyped failures (a thrown process error or an error result's text). */
 export function looksLikeAuthError(text: string): boolean {
-  return /(authenticat|not logged in|please run \/login|log ?in|invalid api key|401|oauth token)/i.test(text);
+  return /(not logged in|please run \/login|invalid api key|oauth token (has )?expired|authentication_failed)/i.test(text);
 }

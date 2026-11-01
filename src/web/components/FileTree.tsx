@@ -1,5 +1,5 @@
 import { createMemo, For, Show } from 'solid-js';
-import type { FileEntry, Priority } from '../../shared/types';
+import type { FileEntry } from '../../shared/types';
 import { api } from '../api';
 import { openFile, snap, viewPath } from '../store';
 
@@ -18,7 +18,12 @@ export function FileTree(props: { order: Order; onOrder: (o: Order) => void }) {
     }
     return list;
   });
-  const pendingCount = (path: string) => s().pending.filter((c) => c.path === path).length;
+  const pendingCounts = createMemo(() => {
+    const m = new Map<string, number>();
+    for (const c of s().pending) m.set(c.path, (m.get(c.path) ?? 0) + 1);
+    return m;
+  });
+  const pendingCount = (path: string) => pendingCounts().get(path) ?? 0;
 
   return (
     <nav class="filetree">
@@ -60,7 +65,7 @@ export function FileTree(props: { order: Order; onOrder: (o: Order) => void }) {
                   <span class={`st st-${f.status}`}>{STATUS_ICON[f.status]}</span>
                   <span class="name">
                     <Show when={props.order === 'plan' && info()}>
-                      <span class={`prio prio-${info()!.priority as Priority}`}>{info()!.index + 1}</span>
+                      <span class={`prio prio-${info()!.priority}`}>{info()!.index + 1}</span>
                     </Show>
                     <span class="dir">{dir()}</span>
                     <span class="base">{base()}</span>

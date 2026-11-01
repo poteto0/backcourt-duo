@@ -7,12 +7,10 @@ export class ApiError extends Error {
 }
 
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const init: RequestInit = { method, credentials: 'same-origin', headers: {} };
-  if (body !== undefined) {
-    init.body = JSON.stringify(body);
-    init.headers = { 'Content-Type': 'application/json' };
-  } else if (method !== 'GET') {
-    init.body = '{}';
+  const payload = body !== undefined ? JSON.stringify(body) : method === 'GET' ? undefined : '{}';
+  const init: RequestInit = { method, credentials: 'same-origin' };
+  if (payload !== undefined) {
+    init.body = payload;
     init.headers = { 'Content-Type': 'application/json' };
   }
   const res = await fetch(path, init);
@@ -32,10 +30,10 @@ export const api = {
   send: (text: string) => call<ChatMessage>('POST', '/api/chat', { text }),
   interrupt: () => call<{ ok: true }>('POST', '/api/agent/interrupt'),
   restart: () => call<{ ok: true }>('POST', '/api/agent/restart'),
-  presence: (c: { path: string; startLine?: number; endLine?: number; side?: Side } | null) => call<{ ok: true }>('PUT', '/api/presence', c),
+  presence: (c: { path: string; startLine?: number | undefined; endLine?: number | undefined; side?: Side | undefined } | null) => call<{ ok: true }>('PUT', '/api/presence', c),
   follow: (followAgent: boolean) => call<{ ok: true }>('PUT', '/api/follow', { followAgent }),
   reviewState: (path: string, reviewState: ReviewState) => call<{ ok: true }>('PUT', '/api/files/review-state', { path, reviewState }),
-  addPending: (c: { path: string; line: number; startLine?: number; side: Side; body: string }) => call<PendingComment>('POST', '/api/pending', c),
+  addPending: (c: { path: string; line: number; startLine?: number | undefined; side: Side; body: string }) => call<PendingComment>('POST', '/api/pending', c),
   editPending: (id: string, body: string) => call<PendingComment>('PATCH', `/api/pending/${encodeURIComponent(id)}`, { body }),
   deletePending: (id: string) => call<PendingComment>('DELETE', `/api/pending/${encodeURIComponent(id)}`),
   submit: (event: ReviewEvent, body: string) => call<{ ok: true; url: string }>('POST', '/api/submit', { event, body }),
