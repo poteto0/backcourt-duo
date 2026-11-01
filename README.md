@@ -1,0 +1,39 @@
+# 🏀 backcourt-duo
+
+PR を Claude エージェントと **ふたりでレビュー**するローカルツール。
+
+## セットアップ
+
+```sh
+nix develop          # Node 26 + pnpm + gh
+pnpm install && pnpm build
+alias backcourt-duo="node $PWD/bin/backcourt-duo.js"   # または pnpm link --global
+```
+
+## 使い方
+
+```sh
+cd your-repo         # PR を出しているブランチで
+backcourt-duo        # → http://localhost:1200 が開く
+```
+
+1. エージェントがレビューの準備をして、読む順番を提案する
+2. チャットで質問しながら、1 ファイルずつ一緒に読む（🤖 = エージェントの位置、👤 = あなたの位置）
+3. 行番号の `+` でコメントする。エージェントにも「積んでおいて」と頼める
+4. **Submit review** を押すと、溜めたコメントが PR に投稿される
+
+## 認証
+
+- **Claude**: Claude Code のサインインをそのまま使う（サブスクで OK）。未ログインなら画面の「Sign in with Claude」か `backcourt-duo auth login`。API キーを使うときは `--auth api-key`（`ANTHROPIC_API_KEY`）
+- **GitHub**: `gh auth login` 済みならそのまま使える（または `GH_TOKEN`）
+
+## よく使うオプション
+
+```sh
+backcourt-duo --base origin/develop   # 比較元を変える（デフォルトは default ブランチ）
+backcourt-duo --pr 123                # 投稿先の PR を指定する
+backcourt-duo doctor                  # 動かないときの診断
+backcourt-duo auth status             # 認証状態を確認する
+```
+
+詳しくは [AGENTS.md](AGENTS.md) と [specs/](specs/) を参照。

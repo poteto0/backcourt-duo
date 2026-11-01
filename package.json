@@ -1,0 +1,39 @@
+{
+  "name": "backcourt-duo",
+  "version": "0.1.0",
+  "description": "Local, agent-paired code review kit: GitHub-like diff + Claude agent chat, posts pending comments to the PR.",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "backcourt-duo": "./bin/backcourt-duo.js",
+    "backcort-duo": "./bin/backcourt-duo.js"
+  },
+  "files": [
+    "bin",
+    "dist"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "pnpm run build:server && pnpm run build:web",
+    "build:server": "tsc -p tsconfig.server.json",
+    "build:web": "vite build",
+    "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.web.json --noEmit",
+    "test": "node --test \"dist/server/**/*.test.js\"",
+    "start": "node bin/backcourt-duo.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.315",
+    "@hono/node-server": "^2.1.5",
+    "hono": "^4.13.14",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "solid-js": "^1.9.18",
+    "typescript": "7.0.2",
+    "vite": "^8.3.5",
+    "vite-plugin-solid": "^2.11.15"
+  }
+}
