@@ -82,6 +82,30 @@ export interface TargetOptions {
   base?: string | undefined;
   head?: string | undefined;
   uncommitted?: boolean | undefined;
+  /** Branch name to record when `head` is not a branch (e.g. a fetched PR ref). */
+  branch?: string | undefined;
+}
+
+/** Local ref that holds a fetched PR head. Kept out of refs/heads so it never clobbers a user branch. */
+export function pullRequestRef(number: number): string {
+  return `refs/backcourt-duo/pr/${number}`;
+}
+
+/**
+ * Fetch a PR's head (`refs/pull/<n>/head`, which also covers fork PRs) from origin, plus its base branch
+ * when known, so the PR can be reviewed without checking it out. Returns the local ref of the PR head.
+ */
+export async function fetchPullRequest(root: string, number: number, baseRef: string | null): Promise<string> {
+  const ref = pullRequestRef(number);
+  const refspecs = [`+refs/pull/${number}/head:${ref}`];
+  if (baseRef) refspecs.push(`+refs/heads/${baseRef}:refs/remotes/origin/${baseRef}`);
+  const r = await run('git', ['fetch', '--no-tags', '--quiet', 'origin', ...refspecs], {
+    cwd: root,
+    timeoutMs: 120_000,
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+  });
+  if (r.code !== 0) throw new GitError(`could not fetch PR #${number} from origin: ${r.stderr.trim() || r.stdout.trim()}`);
+  return ref;
 }
 
 export async function resolveTarget(root: string, opts: TargetOptions): Promise<ReviewTarget> {
@@ -90,7 +114,7 @@ export async function resolveTarget(root: string, opts: TargetOptions): Promise<
   const [baseSha, headSha] = await Promise.all([revParse(root, base), revParse(root, head)]);
   const mergeBaseSha = await git(root, ['merge-base', baseSha, headSha], true);
   if (!mergeBaseSha) throw new GitError(`no merge base between ${base} and ${head}`);
-  const branch = head === 'HEAD' ? await currentBranch(root) : head.replace(/^origin\//, '');
+  const branch = opts.branch ?? (head === 'HEAD' ? await currentBranch(root) : head.replace(/^origin\//, ''));
   return {
     base,
     baseSha,

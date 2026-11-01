@@ -16,7 +16,8 @@ Usage
 Start options
   --base <ref>         compare against (default: the default branch)
   --head <ref>         head ref (default: HEAD)
-  --pr <number>        PR to post to (default: detected from the branch)
+  --pr <number>        review this PR: fetch its head from origin, diff against its
+                       base (default: the current branch and its PR)
   --uncommitted        include working-tree changes
   --port <n>           default 1200 (BACKCOURT_DUO_PORT)
   --host <addr>        loopback only (default 127.0.0.1)

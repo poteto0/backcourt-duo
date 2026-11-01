@@ -48,7 +48,7 @@ function repoChecks(ctx: RepoContext): Check[] {
   else {
     checks.push({ name: 'pr', level: 'ok', message: `#${pr.number} ${pr.title}` });
     const pushed = pr.headSha === target.headSha;
-    checks.push({ name: 'pushed', level: pushed ? 'ok' : 'warn', message: pushed ? 'PR head matches local HEAD' : `PR head ${pr.headSha.slice(0, 7)} ≠ local ${target.headSha.slice(0, 7)} — git push` });
+    checks.push({ name: 'pushed', level: pushed ? 'ok' : 'warn', message: pushed ? 'PR head matches the reviewed head' : `PR head ${pr.headSha.slice(0, 7)} ≠ local ${target.headSha.slice(0, 7)} — git push` });
   }
   return checks;
 }

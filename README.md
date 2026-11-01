@@ -6,7 +6,8 @@ PR を Claude エージェントと **ふたりでレビュー**するローカ�
 
 ```sh
 cd your-repo
-nix run github:poteto0/backcourt-duo             # その場で起動
+nix run github:poteto0/backcourt-duo             # その場で起動（今のブランチの PR）
+nix run github:poteto0/backcourt-duo -- --pr 345 # PR #345 をチェックアウトせずにレビュー
 nix profile install github:poteto0/backcourt-duo # backcourt-duo コマンドとして入れる
 ```
 

@@ -10,7 +10,8 @@ backcourt-duo [start] [options]
 
   --base <ref>          比較元。デフォルトは default ブランチ（下記参照）
   --head <ref>          比較先。デフォルトは HEAD
-  --pr <number>         投稿先の PR 番号を指定する（省略するとブランチから自動で検出する）
+  --pr <number>         その PR をレビューする。PR の head を origin から fetch し、PR の base と比較する（下記参照）。
+                        省略すると現在のブランチから PR を自動で検出する
   --uncommitted         working tree の未コミット変更も diff に含める（その行へのコメントは投稿時に失敗しうる）
   --port <n>            デフォルトは 1200（環境変数 BACKCOURT_DUO_PORT でも指定可）
   --host <addr>         デフォルトは 127.0.0.1。ループバック以外のアドレスは拒否する
@@ -33,9 +34,23 @@ backcourt-duo [start] [options]
    （`--uncommitted` のときは `git diff --merge-base <base>` で working tree と比較する）
 4. オプションは `-M`（rename 検出）と `--no-color --no-ext-diff` を付ける。バイナリは `binary: true` として本文を省く
 
+## `--pr` を指定したとき
+
+チェックアウトや worktree なしで、任意の PR をレビューできる。
+
+1. `GET /repos/{o}/{r}/pulls/{n}` で PR を取得する（GitHub 認証がない、または失敗した場合は base 不明のまま続ける）
+2. `git fetch --no-tags origin +refs/pull/{n}/head:refs/backcourt-duo/pr/{n} +refs/heads/{baseRef}:refs/remotes/origin/{baseRef}` を実行する
+   - `refs/pull/{n}/head` を使うので fork からの PR も取れる
+   - 取得した head は `refs/backcourt-duo/pr/{n}` に置く。`refs/heads` には書かないので、ユーザーのブランチや working tree は変わらない
+   - fetch に失敗したらエラー終了（exit 2）
+3. 比較対象は head = `refs/backcourt-duo/pr/{n}`、base = `--base` があればそれ、なければ `origin/{baseRef}`（PR を取得できなかった場合は default ブランチ）
+4. `target.branch` には PR の head ブランチ名（取得できなければ `pr-{n}`）を入れる。保存状態のキーにもこれを使う
+
+例外として、`--head` または `--uncommitted` を一緒に指定した場合は fetch せず、ローカルの比較対象をそのまま使う。このとき `--pr` は投稿先の PR を決めるだけになる。
+
 ## PR の検出
 
-- `--pr` を指定した場合はその PR を使う
+- `--pr` を指定した場合はその PR を使う（上記）
 - 指定がなければ、remote `origin` の owner/repo と現在のブランチ名から `GET /repos/{o}/{r}/pulls?head={o}:{branch}&state=open` で検索する
 - PR が見つからなくてもサーバーは起動する。ただし Submit は無効になり、UI に「PR が見つからない」と表示される
 - PR の base ブランチが比較元と異なる場合、および PR の head SHA がローカルの head と異なる場合（未 push のコミットがある場合など）は UI に警告を出す
@@ -45,7 +60,7 @@ backcourt-duo [start] [options]
 1. git リポジトリかどうかを確認する。違えばエラー終了（exit 2）
 2. 比較対象を解決して diff を取得する。diff が空なら「差分がない」と表示して終了（exit 0）
 3. セッショントークンを生成し、`127.0.0.1:<port>` で listen する。ポートが使用中なら exit 3
-4. GitHub 認証を解決し、PR を検出する（失敗しても続行する）
+4. GitHub 認証を解決し、PR を検出する（失敗しても続行する）。`--pr` の場合は手順 2 より前に PR の取得と fetch を行う
 5. 保存されている状態があれば読み込む（`--fresh` のときは読まない）
 6. ブラウザで `http://localhost:<port>/?token=<token>` を開き、URL をターミナルにも表示する
 7. エージェントの認証を解決する（specs/sessions/agent-*.md）
