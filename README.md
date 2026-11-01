@@ -2,13 +2,25 @@
 
 PR を Claude エージェントと **ふたりでレビュー**するローカルツール。
 
-## セットアップ
+## インストール（Nix）
+
+```sh
+cd your-repo
+nix run github:poteto0/backcourt-duo             # その場で起動
+nix profile install github:poteto0/backcourt-duo # backcourt-duo コマンドとして入れる
+```
+
+実行時の Node は Nix の Node 26 に固定されるので、手元の Node のバージョンには影響されない。
+
+## 開発用セットアップ
 
 ```sh
 nix develop          # Node 26 + pnpm + gh
 pnpm install && pnpm build
 alias backcourt-duo="node $PWD/bin/backcourt-duo.js"   # または pnpm link --global
 ```
+
+`pnpm-lock.yaml` を変えたら、`flake.nix` の `pnpmDeps.hash` も更新すること（`nix build` が出す `got:` の値に差し替える）。
 
 ## 使い方
 
