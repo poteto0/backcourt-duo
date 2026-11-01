@@ -1,7 +1,8 @@
 // Agent (Claude) authentication — specs/sessions/agent-claude-code.md, agent-api-key.md
 import { run, which, CommandNotFoundError } from '../exec.js';
-import type { AgentAuthMode, AgentAuthSummary } from '../../shared/types.js';
+import type { AccountDisplay, AgentAuthMode, AgentAuthSummary } from '../../shared/types.js';
 import { VERSION } from '../version.js';
+import { resolveAccountDisplay } from '../config.js';
 
 export interface ResolvedAgentAuth {
   summary: AgentAuthSummary;
@@ -38,6 +39,18 @@ function maskSecret(v: string): string {
   return `${v.slice(0, 7)}…${v.slice(-4)}`;
 }
 
+/**
+ * How the Claude account email reaches `AgentAuthSummary.account`. Applied here, server-side, so with
+ * hide/mask the raw address never reaches SSE, the state file, the agent's context or the terminal.
+ */
+export function displayAccount(email: string, display: AccountDisplay): string | undefined {
+  if (display === 'show') return email;
+  if (display === 'hide') return undefined;
+  const at = email.lastIndexOf('@');
+  if (at <= 0) return '***';
+  return `${email[0]}***${email.slice(at)}`;
+}
+
 interface ClaudeAuthStatusJson {
   loggedIn?: boolean;
   authMethod?: string;
@@ -58,8 +71,9 @@ async function claudeAuthStatus(binary: string): Promise<{ ok: true; status: Cla
   }
 }
 
-async function resolveClaudeCode(): Promise<ResolvedAgentAuth> {
-  const warnings = SHADOWING_KEYS.filter((key) => process.env[key]).map((key) => `${key} is set but ignored in claude-code mode (use --auth api-key to use it)`);
+async function resolveClaudeCode(override: AccountDisplay | undefined): Promise<ResolvedAgentAuth> {
+  const display = override ? { value: override, warnings: [] } : resolveAccountDisplay();
+  const warnings = [...display.warnings, ...SHADOWING_KEYS.filter((key) => process.env[key]).map((key) => `${key} is set but ignored in claude-code mode (use --auth api-key to use it)`)];
   const env = claudeCodeEnv();
   const binary = await findClaudeBinary();
   if (!binary) {
@@ -81,7 +95,8 @@ async function resolveClaudeCode(): Promise<ResolvedAgentAuth> {
   const s = st.status;
   const summary: AgentAuthSummary = { mode: 'claude-code', ready: s.loggedIn === true, binary, warnings };
   if (s.authMethod) summary.method = s.apiProvider && s.apiProvider !== 'firstParty' ? s.apiProvider : s.authMethod;
-  if (s.email) summary.account = s.email;
+  const account = s.email ? displayAccount(s.email, display.value) : undefined;
+  if (account) summary.account = account;
   if (s.subscriptionType) summary.subscription = s.subscriptionType;
   if (!summary.ready) summary.hint = 'Sign in with Claude (subscription): click “Sign in with Claude” or run `backcourt-duo auth login`.';
   return { env, executable: binary, summary };
@@ -117,7 +132,8 @@ function resolveApiKey(): ResolvedAgentAuth {
   };
 }
 
-export async function resolveAgentAuth(mode: AgentAuthMode): Promise<ResolvedAgentAuth> {
+/** `accountDisplay` overrides BACKCOURT_DUO_ACCOUNT and the config (e.g. `auth status --show-account`). */
+export async function resolveAgentAuth(mode: AgentAuthMode, accountDisplay?: AccountDisplay): Promise<ResolvedAgentAuth> {
   if (mode === 'api-key') {
     const r = resolveApiKey();
     // Prefer the user's installed claude binary even in api-key mode (same version they use), if present.
@@ -125,7 +141,7 @@ export async function resolveAgentAuth(mode: AgentAuthMode): Promise<ResolvedAge
     if (r.executable) r.summary.binary = r.executable;
     return r;
   }
-  return resolveClaudeCode();
+  return resolveClaudeCode(accountDisplay);
 }
 
 /** Typed SDK errors that mean "sign in again" rather than "try again". */

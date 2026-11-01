@@ -55,6 +55,28 @@ backcourt-duo [start] [options]
 - PR が見つからなくてもサーバーは起動する。ただし Submit は無効になり、UI に「PR が見つからない」と表示される
 - PR の base ブランチが比較元と異なる場合、および PR の head SHA がローカルの head と異なる場合（未 push のコミットがある場合など）は UI に警告を出す
 
+## 設定ファイル
+
+ユーザー設定は `~/.backcourt-duo/config.json` に置く（なければ全項目が未指定として扱う）。
+
+```json
+{
+  "privacy": {
+    "account": "hide"
+  }
+}
+```
+
+- 読み込みは `src/server/config.ts`。zod でスキーマを検証し、壊れた JSON や不正な値のときはファイル全体を無視する。その旨は `AgentAuthSummary.warnings` に入り、`auth status`・`doctor`・チャットに表示される（環境変数の不正な値も同じ）
+- 知らないキーは無視する（ほかの機能の設定を足してもエラーにしない）
+- 認証情報は入れない（AGENTS.md の原則 6）
+
+| キー | 値 | 環境変数 | 説明 |
+|---|---|---|---|
+| `privacy.account` | `hide`（デフォルト） / `mask` / `show` | `BACKCOURT_DUO_ACCOUNT` | Claude アカウントのメールアドレスの表示方法（specs/sessions/agent-claude-code.md#アカウントの表示） |
+
+優先順位は 環境変数 > 設定ファイル > デフォルト。
+
 ## 起動シーケンス
 
 1. git リポジトリかどうかを確認する。違えばエラー終了（exit 2）

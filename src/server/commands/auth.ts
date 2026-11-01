@@ -15,6 +15,7 @@ export interface AuthOptions {
   github: boolean;
   console: boolean;
   yes: boolean;
+  showAccount: boolean;
 }
 
 async function githubHost(cwd: string): Promise<string> {
@@ -27,7 +28,7 @@ async function githubHost(cwd: string): Promise<string> {
 
 export async function authStatus(opts: AuthOptions): Promise<number> {
   const mode = resolveAuthMode(opts.auth);
-  const [agent, gh] = await Promise.all([resolveAgentAuth(mode), githubHost(opts.cwd).then((h) => resolveGitHubAuth(h))]);
+  const [agent, gh] = await Promise.all([resolveAgentAuth(mode, opts.showAccount ? 'show' : undefined), githubHost(opts.cwd).then((h) => resolveGitHubAuth(h))]);
   const a = agent.summary;
   const g = gh.summary;
   if (opts.json) {
