@@ -59,6 +59,7 @@ stopped（サーバー終了時）
 | `propose_change` | `{ path, startLine, endLine?, replacement, note }` | 変更案を diff 上にインライン表示する（RIGHT の行番号、1 ハンク内）。ファイルは変更しない。人間が suggestion として pending に積むか却下する |
 | `withdraw_proposal` | `{ id }` | 自分の変更案を取り下げる |
 | `mark_file_reviewed` | `{ path }` | `reviewed` にする |
+| `recommend_review` | `{ event: 'COMMENT'\|'APPROVE'\|'REQUEST_CHANGES', body }` | wrapup で推奨 verdict と総評を store の `recommendation` に登録する（再度呼ぶと上書き）。Submit ダイアログの初期値になる。投稿はしない |
 | `set_phase` | `{ phase: 'walkthrough'\|'wrapup' }` | |
 
 すべてのツールの結果は JSON テキストで返す。失敗した場合は `isError: true` にして理由を返す。

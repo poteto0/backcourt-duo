@@ -193,6 +193,12 @@ export interface Submission {
 
 export type ReviewEvent = 'COMMENT' | 'APPROVE' | 'REQUEST_CHANGES';
 
+/** The agent's suggested verdict and summary; the Submit dialog opens with it (specs/sessions/github.md). */
+export interface ReviewRecommendation {
+  event: ReviewEvent;
+  body: string;
+}
+
 export interface Warning {
   code: string;
   message: string;
@@ -217,6 +223,7 @@ export interface ReviewStateSnapshot {
   agent: AgentInfo;
   github: GitHubContext;
   lastSubmission: Submission | null;
+  recommendation: ReviewRecommendation | null;
   warnings: Warning[];
 }
 

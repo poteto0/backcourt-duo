@@ -166,7 +166,7 @@ export function createApp(deps: AppDeps): Hono {
     try {
       const count = store.pending.length;
       const { url } = await submitReview(deps.github, owner, repo, pr.number, { event, body: reviewBody, comments: store.pending, commitId: pr.headSha });
-      store.clearPendingAfterSubmit({ url, at: new Date().toISOString(), count, event });
+      store.completeSubmission({ url, at: new Date().toISOString(), count, event });
       store.appendChat(store.makeMessage('system', `🚀 Review submitted (${event}, ${count} comment${count === 1 ? '' : 's'}): ${url}`));
       return c.json({ ok: true, url });
     } catch (err) {

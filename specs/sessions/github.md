@@ -47,9 +47,12 @@ interface PullRequestInfo { number: number; url: string; title: string; body: st
 }
 ```
 
+- Submit ダイアログは、store に `recommendation`（エージェントが `recommend_review` で登録した推奨案）があれば、
+  その `event` と `body` を初期値として開く。人間はそのまま投稿しても、編集してもよい。編集した場合は「推奨案に戻す」ボタンを出す。
+  推奨案がなければ `COMMENT` と空の本文で開く
 - `REQUEST_CHANGES` と `COMMENT` で pending が 0 件のときは、`body` が空でないことを必須にする（GitHub と同じ制約）
 - 自分の PR に対する `APPROVE` / `REQUEST_CHANGES` は GitHub 側で 422 になる。そのエラーはそのまま UI に表示する
 - エージェントが書いたコメントには、本文の末尾に `\n\n<sub>🤖 drafted with backcourt-duo</sub>` を付ける（人間が編集していても付ける）
-- 成功したら `lastSubmission` を設定し、pending を空にして、チャットに「レビューを投稿しました（リンク）」と表示する。phase は `idle` にする
+- 成功したら `lastSubmission` を設定し、pending と `recommendation` を空にして、チャットに「レビューを投稿しました（リンク）」と表示する。phase は `idle` にする
 - 失敗したら pending は残し、GitHub のエラーメッセージ（`errors[]` を含む）をダイアログに表示する
 - ローカルの head SHA と PR の head SHA が異なる場合は、ダイアログに警告を出したうえで投稿できるようにする（行がずれたコメントは GitHub が拒否しうる）

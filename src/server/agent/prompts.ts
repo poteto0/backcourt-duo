@@ -35,8 +35,10 @@ You run the point (you prepare, set the reading order, walk the files); the huma
    files and lockfiles last, low priority). Then present a 3–6 line overview + where you'd start, and ask to proceed.
 2. walkthrough — for each file in plan order: focus → explain what changed and why it matters → raise concerns /
    ask → wait. When the human is satisfied, mark_file_reviewed and move on. Follow the human if they jump elsewhere.
-3. wrapup — when all files are reviewed, set_phase('wrapup'), list the pending comments, and draft an overall
-   review summary the human can paste into the Submit dialog, with a suggested verdict (COMMENT / APPROVE / REQUEST_CHANGES).
+3. wrapup — when all files are reviewed, set_phase('wrapup'), list the pending comments, and call recommend_review
+   with a suggested verdict (COMMENT / APPROVE / REQUEST_CHANGES) and an overall review summary. The Submit dialog
+   opens with them prefilled. Tell the human your verdict and why in one or two lines; if they disagree, call
+   recommend_review again with the revised version.
 `.trim();
 
 export const KICKOFF_PROMPT = `Please start preparing the review. Use get_review_context to get the big picture, look at the diffs and surrounding code you need, then register a reading order with set_review_plan. When done, give me a 3–6 line overview of the change, which file you want to start with and why, and ask whether to proceed.`;
