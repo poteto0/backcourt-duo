@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { chmod, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadConfig, resolveAccountDisplay, resolveModel } from './config.js';
+import { loadConfig, resolveAccountDisplay, resolveEffort, resolveModel } from './config.js';
 import { displayAccount, resolveAgentAuth } from './auth/agent.js';
 
 const EMAIL = 'alice@example.com';
@@ -31,6 +31,17 @@ test('resolveModel: --model > env > config agent.model > undefined', () => {
   assert.equal(resolveModel(undefined, {}, cfg), 'haiku');
   assert.equal(resolveModel(undefined, { BACKCOURT_DUO_MODEL: 'sonnet' }, cfg), 'sonnet');
   assert.equal(resolveModel('opus', { BACKCOURT_DUO_MODEL: 'sonnet' }, cfg), 'opus');
+});
+
+test('resolveEffort: --effort > env > config agent.effort > undefined; a bad env value warns', () => {
+  const cfg = { value: { agent: { effort: 'low' as const } }, warnings: [] };
+  assert.deepEqual(resolveEffort(undefined, {}, { value: {}, warnings: [] }), { value: undefined, warnings: [] });
+  assert.equal(resolveEffort(undefined, {}, cfg).value, 'low');
+  assert.equal(resolveEffort(undefined, { BACKCOURT_DUO_EFFORT: 'xhigh' }, cfg).value, 'xhigh');
+  assert.equal(resolveEffort('max', { BACKCOURT_DUO_EFFORT: 'xhigh' }, cfg).value, 'max');
+  const bogus = resolveEffort(undefined, { BACKCOURT_DUO_EFFORT: 'turbo' }, cfg);
+  assert.equal(bogus.value, 'low');
+  assert.match(bogus.warnings[0] ?? '', /BACKCOURT_DUO_EFFORT/);
 });
 
 test('loadConfig: missing → empty, broken or invalid → ignored, unknown keys kept', async () => {

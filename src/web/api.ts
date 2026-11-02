@@ -1,4 +1,4 @@
-import type { ChangeProposal, ChatEvent, ChatMessage, DiffFile, HelloEvent, PendingComment, ReviewEvent, ReviewState, ReviewStateSnapshot, Side } from '../shared/types';
+import type { ChangeProposal, ChatEvent, ChatMessage, DiffFile, EffortLevel, HelloEvent, PendingComment, ReviewEvent, ReviewState, ReviewStateSnapshot, Side } from '../shared/types';
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number, readonly details: string[] = []) {
@@ -30,6 +30,7 @@ export const api = {
   send: (text: string) => call<ChatMessage>('POST', '/api/chat', { text }),
   interrupt: () => call<{ ok: true }>('POST', '/api/agent/interrupt'),
   setModel: (model: string) => call<{ ok: true }>('PUT', '/api/agent/model', { model }),
+  setEffort: (effort: EffortLevel | null) => call<{ ok: true }>('PUT', '/api/agent/effort', { effort }),
   restart: () => call<{ ok: true }>('POST', '/api/agent/restart'),
   presence: (c: { path: string; startLine?: number | undefined; endLine?: number | undefined; side?: Side | undefined } | null) => call<{ ok: true }>('PUT', '/api/presence', c),
   follow: (followAgent: boolean) => call<{ ok: true }>('PUT', '/api/follow', { followAgent }),

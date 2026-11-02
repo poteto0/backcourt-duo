@@ -17,6 +17,8 @@ backcourt-duo [start] [options]
   --host <addr>         デフォルトは 127.0.0.1。ループバック以外のアドレスは拒否する
   --auth <mode>         エージェントの認証。claude-code（デフォルト）または api-key
   --model <id>          エージェントのモデル（省略すると設定ファイルの agent.model、それもなければ Claude Code の既定モデル）
+  --effort <level>      エージェントの effort（思考の深さ）。low / medium / high / xhigh / max
+                        （省略すると設定ファイルの agent.effort、それもなければモデルの既定）
   --lang <tag>          会話とレビューの両方の言語（BCP 47。下記「言語」参照）
   --chat-lang <tag>     エージェントと話す言語
   --review-lang <tag>   GitHub に投稿されるコメント・総評の言語
@@ -68,7 +70,8 @@ backcourt-duo [start] [options]
     "account": "hide"
   },
   "agent": {
-    "model": "sonnet"
+    "model": "sonnet",
+    "effort": "high"
   },
   "language": {
     "conversation": "ja",
@@ -88,6 +91,7 @@ backcourt-duo [start] [options]
 | キー | 値 | 環境変数 | 説明 |
 |---|---|---|---|
 | `agent.model` | モデル ID またはエイリアス（例: `sonnet`）。省略時は Claude Code の既定モデル | `BACKCOURT_DUO_MODEL` | エージェントの既定モデル。`--model` がさらに優先する。起動後は UI で切り替えられる（specs/sessions/agent-session.md#モデルの切り替え） |
+| `agent.effort` | `low` / `medium` / `high` / `xhigh` / `max`。省略時はモデルの既定 | `BACKCOURT_DUO_EFFORT` | エージェントの既定 effort。`--effort` がさらに優先する。不正な環境変数の値は警告して無視する。起動後は UI で切り替えられる（specs/sessions/agent-session.md#effort-の切り替え） |
 | `privacy.account` | `hide`（デフォルト） / `mask` / `show` | `BACKCOURT_DUO_ACCOUNT` | Claude アカウントのメールアドレスの表示方法（specs/sessions/agent-claude-code.md#アカウントの表示） |
 | `language` | `"ja"`（両方）または `{ "conversation": "ja", "review": "en" }` | `BACKCOURT_DUO_LANG` ほか | 下記「言語」 |
 
