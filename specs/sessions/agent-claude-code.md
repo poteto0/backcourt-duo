@@ -24,13 +24,31 @@ backcourt-duo はトークンを読まないし、保存もしない。認証の
 
 | 結果 | `AgentAuthSummary` |
 |---|---|
-| `loggedIn: true` | `ready: true`, `method: authMethod`, `account: email`, `subscription: subscriptionType` |
+| `loggedIn: true` | `ready: true`, `method: authMethod`, `account: 表示ポリシーに従って変換した email`（下記）, `subscription: subscriptionType` |
 | `loggedIn: false` | `ready: false`, `hint: 'Sign in with Claude (subscription)'` |
 | `claude` が PATH にない | 同梱の実行ファイルで起動を試み、最初のメッセージで認証エラーが返れば `ready: false` にする。`hint` でインストールとログインを案内する |
 | コマンドが失敗した | `ready: false`, `hint` に stderr の 1 行目を入れる |
 
 エージェントの実行中に認証エラー（`SDKAuthStatusMessage`、またはエラー文字列に `authentication` / `login` / `401` を含む結果）を受け取った場合は、
 `agent.status = 'signed-out'` にして UI にサインインを促す。
+
+## アカウントの表示
+
+Claude アカウントのメールアドレスは画面共有・配信・スクリーンショットで漏れやすいので、**デフォルトでは出さない**。
+表示方法は `BACKCOURT_DUO_ACCOUNT` > `~/.backcourt-duo/config.json` の `privacy.account` > `hide` の順で決まる（specs/commands/start.md#設定ファイル）。
+
+| 値 | `AgentAuthSummary.account` | 表示の例 |
+|---|---|---|
+| `hide`（デフォルト） | 入れない | `claude-code · pro` |
+| `mask` | 先頭 1 文字とドメインだけ残す | `a***@example.com` |
+| `show` | そのまま | `alice@example.com` |
+
+- 変換は `src/server/auth/agent.ts` で `AgentAuthSummary` を作るときに 1 回だけ行う。
+  `hide` / `mask` のときは生のメールアドレスがサーバーのメモリ上の summary にも入らないので、
+  SSE、永続化ファイル（チャット中の「Signed in as …」を含む）、エージェントのコンテキスト、ターミナル出力のどこにも流れない。UI 側で隠す実装にはしない
+- UI のチャットヘッダー、サインイン時のシステムメッセージ、`start` の `agent` 行、`doctor` の `agent-auth`、`auth status` はすべてこの値を表示する
+- 本人確認したいときは `backcourt-duo auth status --show-account`（その実行だけ `show` として扱う）
+- GitHub のログイン名（`login`）は公開情報なので対象外
 
 ## サインイン（サブスク）
 

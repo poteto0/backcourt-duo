@@ -123,6 +123,8 @@ export interface ReviewTarget {
 }
 
 export type AgentAuthMode = 'claude-code' | 'api-key';
+/** How the Claude account email is shown (`privacy.account`). */
+export type AccountDisplay = 'hide' | 'mask' | 'show';
 
 export interface AgentAuthSummary {
   mode: AgentAuthMode;

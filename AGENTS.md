@@ -74,6 +74,7 @@ UI を開発するとき: `pnpm build:web --watch` を動かしたまま `node b
    GitHub への投稿は人間の Submit 操作からしか起きない（エージェントは pending を溜めるところまで）。
 5. **ローカルサーバーは 127.0.0.1 にのみ bind し、セッショントークンを必須にする**（specs/sessions/local-server.md）。
 6. 認証情報（API キー、OAuth トークン、GitHub トークン）は、ログ・SSE・永続化ファイル・エージェントのコンテキストのどこにも出さない。
+   Claude アカウントのメールアドレスも、デフォルトでは出さない（`privacy.account`。マスクはサーバー側で行う。specs/sessions/agent-claude-code.md）。
 
 ## 仕様書
 

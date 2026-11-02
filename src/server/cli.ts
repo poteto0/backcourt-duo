@@ -7,7 +7,8 @@ const HELP = `🏀 backcourt-duo v${VERSION} — pair-review a PR with a Claude 
 
 Usage
   backcourt-duo [start] [options]      start the review server (http://localhost:1200)
-  backcourt-duo auth status [--json]   show Claude + GitHub auth
+  backcourt-duo auth status [--json] [--show-account]
+                                       show Claude + GitHub auth
   backcourt-duo auth login [--github] [--console]
                                        sign in (default: Claude subscription via Claude Code)
   backcourt-duo auth logout --claude   log Claude Code out
@@ -27,6 +28,10 @@ Start options
   --no-agent           diff + comments only
   --fresh              discard saved state for this branch
   -C, --cwd <dir>      repository directory
+
+Settings (~/.backcourt-duo/config.json)
+  privacy.account      Claude account email: hide (default) | mask | show
+                       (BACKCOURT_DUO_ACCOUNT)
 `;
 
 const OPTIONS = {
@@ -47,6 +52,7 @@ const OPTIONS = {
   github: { type: 'boolean', default: false },
   console: { type: 'boolean', default: false },
   yes: { type: 'boolean', short: 'y', default: false },
+  'show-account': { type: 'boolean', default: false },
   help: { type: 'boolean', short: 'h', default: false },
   version: { type: 'boolean', short: 'v', default: false },
 } as const;
@@ -102,7 +108,7 @@ export async function main(argv: string[]): Promise<number> {
       }
       case 'auth': {
         const auth = await import('./commands/auth.js');
-        const opts = { cwd, json: v.json, auth: v.auth, claude: v.claude, github: v.github, console: v.console, yes: v.yes };
+        const opts = { cwd, json: v.json, auth: v.auth, claude: v.claude, github: v.github, console: v.console, yes: v.yes, showAccount: v['show-account'] };
         if (sub === undefined || sub === 'status') return await auth.authStatus(opts);
         if (sub === 'login') return await auth.authLogin(opts);
         if (sub === 'logout') return await auth.authLogout(opts);

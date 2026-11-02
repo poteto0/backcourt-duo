@@ -3,14 +3,14 @@
 エージェント（Claude）と GitHub の認証状態を確認し、必要ならサインインする。
 backcourt-duo 自身は認証情報を保存しない。**既存のツール（Claude Code と gh）が持っている認証をそのまま使う**のが基本方針である。
 
-## `backcourt-duo auth status [--json] [--auth <mode>]`
+## `backcourt-duo auth status [--json] [--auth <mode>] [--show-account]`
 
 次の内容を表示する。
 
 ```
 Agent (Claude)
   mode:      claude-code            ← 実際に使うモード（--auth / BACKCOURT_DUO_AUTH / デフォルト）
-  status:    signed in (claude.ai, pro)  you@example.com
+  status:    signed in (claude.ai, pro)  ← メールアドレスはデフォルトで出さない
   binary:    /home/me/.local/bin/claude (2.1.x)
   note:      ANTHROPIC_API_KEY is set but ignored in claude-code mode
 GitHub
@@ -20,6 +20,8 @@ GitHub
 
 - claude-code モードの状態は `claude auth status --json` の結果から作る（specs/sessions/agent-claude-code.md）
 - api-key モードでは環境変数があるかどうかだけを表示する。値は先頭 7 文字と末尾 4 文字だけを残してマスクする
+- Claude アカウントのメールアドレスは `privacy.account`（`BACKCOURT_DUO_ACCOUNT`）に従う。デフォルトは非表示。
+  `--show-account` を付けると、その実行だけ設定にかかわらずそのまま表示する（specs/sessions/agent-claude-code.md#アカウントの表示）
 - `--json` は機械可読な形で出力する（`{ agent: AgentAuthSummary, github: GitHubAuthSummary }`）
 - 終了コード: 両方使える → 0、エージェントだけ使えない → 10、GitHub だけ使えない → 11、両方使えない → 12
 
