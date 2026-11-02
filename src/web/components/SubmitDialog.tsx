@@ -12,8 +12,10 @@ const EVENTS: Array<{ id: ReviewEvent; label: string; help: string }> = [
 
 export function SubmitDialog(props: { onClose: () => void }) {
   const s = () => snap()!;
-  const [event, setEvent] = createSignal<ReviewEvent>('COMMENT');
-  const [body, setBody] = createSignal('');
+  // Open with the agent's recommendation (if any) so "submit as recommended" is one click.
+  const rec = () => s().recommendation;
+  const [event, setEvent] = createSignal<ReviewEvent>(rec()?.event ?? 'COMMENT');
+  const [body, setBody] = createSignal(rec()?.body ?? '');
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<{ message: string; details: string[] } | null>(null);
   const [done, setDone] = createSignal<string | null>(null);
@@ -25,6 +27,10 @@ export function SubmitDialog(props: { onClose: () => void }) {
   });
   const needsBody = () => event() !== 'APPROVE' && s().pending.length === 0;
   const headMismatch = () => s().warnings.find((w) => w.code === 'head-mismatch');
+  const edited = () => {
+    const r = rec();
+    return !!r && (r.event !== event() || r.body !== body());
+  };
 
   const submit = async () => {
     setBusy(true);
@@ -63,14 +69,41 @@ export function SubmitDialog(props: { onClose: () => void }) {
             <Show when={s().pr}>{(pr) => <span class="muted"> · #{pr().number}</span>}</Show>
           </h2>
           <Show when={headMismatch()}>{(w) => <div class="warning">⚠️ {w().message}</div>}</Show>
-          <textarea rows="6" placeholder="Leave a summary (Markdown). Tip: ask the agent to “wrap up” for a draft." value={body()} onInput={(e) => setBody(e.currentTarget.value)} />
+          <Show when={rec()}>
+            {(r) => (
+              <div class="recommendation">
+                <span class="who agent">🤖</span>
+                {edited() ? "You changed the agent's recommendation." : "Prefilled with the agent's recommendation."}
+                <Show when={edited()}>
+                  <button
+                    class="btn ghost small"
+                    onClick={() => {
+                      setEvent(r().event);
+                      setBody(r().body);
+                    }}
+                  >
+                    Use recommendation
+                  </button>
+                </Show>
+              </div>
+            )}
+          </Show>
+          <textarea rows="6" placeholder="Leave a summary (Markdown). Tip: ask the agent to “wrap up” and it will prefill a recommendation." value={body()} onInput={(e) => setBody(e.currentTarget.value)} />
           <div class="events">
             <For each={EVENTS}>
               {(ev) => (
                 <label classList={{ ev: true, on: event() === ev.id, [ev.id.toLowerCase()]: true }}>
                   <input type="radio" name="event" checked={event() === ev.id} onChange={() => setEvent(ev.id)} />
                   <span>
-                    <strong>{ev.label}</strong>
+                    <strong>
+                      {ev.label}
+                      <Show when={rec()?.event === ev.id}>
+                        {' '}
+                        <span class="who agent" title="Recommended by the agent">
+                          🤖
+                        </span>
+                      </Show>
+                    </strong>
                     <small>{ev.help}</small>
                   </span>
                 </label>

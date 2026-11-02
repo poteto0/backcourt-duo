@@ -20,6 +20,7 @@ import type {
   Presence,
   PullRequestInfo,
   ReviewPlan,
+  ReviewRecommendation,
   ReviewState,
   ReviewStateSnapshot,
   ReviewTarget,
@@ -41,6 +42,7 @@ interface Persisted {
   chat: ChatMessage[];
   agentSessionId: string | null;
   lastSubmission: Submission | null;
+  recommendation?: ReviewRecommendation | null;
 }
 
 export class StoreError extends Error {}
@@ -61,6 +63,7 @@ export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] 
   agent: AgentInfo = { status: 'starting', auth: null, loginInProgress: false };
   github: GitHubContext = { auth: null, owner: null, repo: null };
   lastSubmission: Submission | null = null;
+  recommendation: ReviewRecommendation | null = null;
   chat: ChatMessage[] = [];
   agentSessionId: string | null = null;
   /** Human actions since the agent's last turn (specs/sessions/agent-session.md). */
@@ -119,6 +122,7 @@ export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] 
       agent: this.agent,
       github: this.github,
       lastSubmission: this.lastSubmission,
+      recommendation: this.recommendation,
       warnings: this.warnings,
     };
   }
@@ -162,8 +166,10 @@ export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] 
     this.phase = data.phase;
     this.chat = data.chat.map((m) => (m.streaming ? { ...m, streaming: false } : m));
     this.lastSubmission = data.lastSubmission;
-    // Only resume the agent conversation if the code under review is unchanged.
-    this.agentSessionId = data.headSha === this.target.headSha && data.mergeBaseSha === this.target.mergeBaseSha ? data.agentSessionId : null;
+    // The agent conversation and its verdict only carry over if the code under review is unchanged.
+    const sameCode = data.headSha === this.target.headSha && data.mergeBaseSha === this.target.mergeBaseSha;
+    this.agentSessionId = sameCode ? data.agentSessionId : null;
+    this.recommendation = sameCode ? (data.recommendation ?? null) : null;
     if (!this.agentSessionId && this.chat.length) {
       this.chat.push(this.makeMessage('system', 'The branch changed since the last session; the agent starts a fresh conversation (pending comments were kept where lines still match).'));
     }
@@ -194,6 +200,7 @@ export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] 
       chat: this.chat.slice(-500),
       agentSessionId: this.agentSessionId,
       lastSubmission: this.lastSubmission,
+      recommendation: this.recommendation,
     };
     const dir = join(this.statePath, '..');
     await mkdir(dir, { recursive: true });
@@ -311,8 +318,7 @@ export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] 
 
   addPending(input: { path: string; side?: Side | undefined; line: number; startLine?: number | undefined; body: string; author: Actor }): PendingComment {
     const side = input.side ?? 'RIGHT';
-    const body = input.body.trim();
-    if (!body) throw new StoreError('comment body is empty');
+    const body = requireText(input.body, 'comment body');
     const err = this.validateLocation(input.path, side, input.line, input.startLine);
     if (err) throw new StoreError(err);
     const startLine = input.startLine !== undefined && input.startLine !== input.line ? input.startLine : undefined;
@@ -326,8 +332,7 @@ export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] 
   updatePending(id: string, body: string, by: Actor): PendingComment {
     const c = this.pending.find((x) => x.id === id);
     if (!c) throw new StoreError(`no pending comment ${id}`);
-    const text = body.trim();
-    if (!text) throw new StoreError('comment body is empty');
+    const text = requireText(body, 'comment body');
     const next: PendingComment = { ...c, body: text, updatedAt: now() };
     if (by === 'human' && c.author === 'agent') next.editedByHuman = true;
     this.pending = this.pending.map((x) => (x.id === id ? next : x));
@@ -385,8 +390,17 @@ export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] 
     return c;
   }
 
-  clearPendingAfterSubmit(sub: Submission): void {
+  // ------------------------------------------------------------ recommendation / submit
+
+  setRecommendation(input: ReviewRecommendation): void {
+    this.recommendation = { event: input.event, body: requireText(input.body, 'summary body') };
+    this.changed();
+  }
+
+  /** The submission-completed transition: everything scoped to one review round is reset here. */
+  completeSubmission(sub: Submission): void {
     this.pending = [];
+    this.recommendation = null;
     this.lastSubmission = sub;
     this.phase = 'idle';
     this.changed();
@@ -436,6 +450,12 @@ export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] 
     this.agentSessionId = id;
     this.scheduleSave();
   }
+}
+
+function requireText(s: string, what: string): string {
+  const text = s.trim();
+  if (!text) throw new StoreError(`${what} is empty`);
+  return text;
 }
 
 function truncate(s: string, n: number): string {

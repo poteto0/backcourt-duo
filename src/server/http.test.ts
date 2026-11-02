@@ -98,6 +98,7 @@ test('submit posts one review to the PR and clears pending', async () => {
   store.pr = { number: 7, url: 'u', title: 't', body: '', baseRef: 'main', headRef: 'feat', headSha: 'h', author: 'x', draft: false };
   store.github = { auth: { ready: true, host: 'github.com' }, owner: 'o', repo: 'r' };
   store.addPending({ path: 'a.ts', line: 2, body: 'agent says', author: 'agent' });
+  store.setRecommendation({ event: 'REQUEST_CHANGES', body: 'please fix' });
   const app = createApp({ store, session, agent: null, github: { token: 't0k', apiBase: `http://127.0.0.1:${port}`, summary: { ready: true, host: 'github.com' } }, authMode: 'claude-code', webRoot: '/x' });
   const res = await app.request('/api/submit', {
     method: 'POST',
@@ -113,6 +114,15 @@ test('submit posts one review to the PR and clears pending', async () => {
   assert.equal(store.pending.length, 0);
   assert.equal(store.phase, 'idle');
   assert.equal(store.lastSubmission?.count, 1);
+  assert.equal(store.recommendation, null);
+});
+
+test('the agent recommendation is part of the snapshot and must have a body', () => {
+  const { store } = setup();
+  assert.equal(store.snapshot().recommendation, null);
+  assert.throws(() => store.setRecommendation({ event: 'APPROVE', body: '  ' }), /empty/);
+  store.setRecommendation({ event: 'APPROVE', body: ' LGTM \n' });
+  assert.deepEqual(store.snapshot().recommendation, { event: 'APPROVE', body: 'LGTM' });
 });
 
 test('change proposals are shown, never applied, and can be staged as a suggestion', async () => {

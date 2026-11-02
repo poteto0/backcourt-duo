@@ -3,7 +3,7 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { renderFileDiffForAgent } from '../diff.js';
 import { StoreError, type ReviewStore } from '../store.js';
-import { AgentPhaseSchema, cursorShape, pendingShape, PrioritySchema } from '../schemas.js';
+import { AgentPhaseSchema, cursorShape, pendingShape, PrioritySchema, ReviewEventSchema } from '../schemas.js';
 
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
 
@@ -38,6 +38,7 @@ export function createDuoTools(store: ReviewStore, notify: (text: string) => voi
           }),
           pending: store.pending.map(({ id, path, side, line, startLine, author, body }) => ({ id, path, side, line, startLine, author, body })),
           proposals: store.proposals.map(({ id, path, startLine, endLine, note }) => ({ id, path, startLine, endLine, note })),
+          recommendation: store.recommendation,
           presence: store.presence,
           warnings: store.warnings.map((w) => w.message),
         });
@@ -136,6 +137,17 @@ export function createDuoTools(store: ReviewStore, notify: (text: string) => voi
         store.setReviewState(path, 'reviewed', 'agent');
         return ok({ ok: true, remaining: store.files.filter((f) => f.reviewState !== 'reviewed').map((f) => f.path) });
       }),
+    ),
+
+    tool(
+      'recommend_review',
+      'At wrap-up, register your suggested verdict and overall review summary. The Submit dialog opens with them prefilled; the human can submit as-is or edit. Calling again replaces the previous recommendation.',
+      { event: ReviewEventSchema, body: z.string().min(1).describe('overall review summary (Markdown), written for the PR author') },
+      async (input) =>
+        guard(() => {
+          store.setRecommendation(input);
+          return ok({ ok: true, event: input.event });
+        }),
     ),
 
     tool('set_phase', 'Declare the review phase. Use wrapup once every file is reviewed.', { phase: AgentPhaseSchema }, async ({ phase }) =>

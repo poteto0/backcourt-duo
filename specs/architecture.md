@@ -27,6 +27,7 @@ interface ReviewState {
   agent: { status: 'starting' | 'thinking' | 'waiting' | 'error' | 'stopped' | 'signed-out'; auth: AgentAuthSummary; error?: string };
   github: { auth: GitHubAuthSummary };
   lastSubmission: { url: string; at: string; count: number } | null;
+  recommendation: { event: 'COMMENT'|'APPROVE'|'REQUEST_CHANGES'; body: string } | null; // エージェントの推奨案
 }
 ```
 
@@ -36,6 +37,9 @@ interface ReviewState {
 - `PendingComment = { id, path, side: 'LEFT'|'RIGHT', line, startLine?, body, author: 'human'|'agent', createdAt, updatedAt }`
   - `line` / `startLine` は GitHub API と同じ意味。`RIGHT` は新しい側の行番号、`LEFT` は古い側の行番号を指す
   - 作成時に「diff のハンク内にある行か」を検証する（GitHub はハンク外の行へのコメントを拒否するため）
+
+- `recommendation` はエージェントが `recommend_review` で登録する推奨 verdict と総評。Submit ダイアログはこれを初期値として開く
+  （specs/sessions/github.md）。永続化するが、エージェントのセッションと同じく head / merge-base が変わったら捨てる。Submit に成功したら消す
 
 - `ChangeProposal = { id, path, startLine, endLine, original: string[], replacement: string[], note, createdAt }`
   - エージェントが `propose_change` で作る「こう直すとどうなるか」の提示。**作業ツリーのファイルは一切変更しない**
@@ -51,9 +55,9 @@ store が変更されると `state` イベント（チャットを含まない�
 
 ### 永続化
 
-状態は `<git-dir>/backcourt-duo/<head-branch>.json` に保存する（pending、変更案、reviewState、plan、チャットログ、エージェントのセッション ID）。
+状態は `<git-dir>/backcourt-duo/<head-branch>.json` に保存する（pending、変更案、推奨案、reviewState、plan、チャットログ、エージェントのセッション ID）。
 `.git` の中に置くので誤ってコミットされない。同じブランチで再起動すると復元され、エージェントも SDK の `resume` で会話を引き継ぐ。
-`--fresh` を付けると破棄して最初から始める。Submit に成功したら pending は空にする。
+`--fresh` を付けると破棄して最初から始める。Submit に成功したら pending と推奨案は空にする。
 
 ## Presence（「いまどこを読んでいるか」の共有）
 
@@ -81,7 +85,7 @@ UI の操作:
    最後に全体像と「どこから読むか」をチャットで提示し、人間に確認を求める
 2. `walkthrough`: 1 ファイルずつ `focus` → 説明 → 気になる点の提示と質問 → 人間の返答を待つ、を繰り返す。
    合意した指摘は `add_pending_comment` で pending に積む。終わったファイルには `mark_file_reviewed` を呼ぶ
-3. `wrapup`: 全ファイルを見終わると `set_phase('wrapup')` に移る。pending の一覧をまとめ、レビュー全体の総評案を提示する
+3. `wrapup`: 全ファイルを見終わると `set_phase('wrapup')` に移る。pending の一覧をまとめ、`recommend_review` で推奨 verdict と総評を登録する（Submit ダイアログに初期値として入る）
 4. `idle`: Submit 後。以降は質問に答えるだけになる
 
 フェーズの遷移は MCP ツール経由でエージェントが宣言する。人間はチャットでいつでも割り込める（「先に X を見たい」など）。
