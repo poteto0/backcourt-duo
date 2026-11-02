@@ -8,6 +8,7 @@ import { GitError } from '../git.js';
 import { ReviewStore } from '../store.js';
 import { LocalSession, isLoopbackHost } from '../auth/local.js';
 import { resolveAuthMode } from '../auth/agent.js';
+import { resolveModel } from '../config.js';
 import { AgentSession } from '../agent/session.js';
 import { createApp } from '../http.js';
 import { PACKAGE_ROOT, VERSION } from '../version.js';
@@ -67,7 +68,7 @@ export async function startCommand(opts: StartOptions): Promise<number> {
   store.github = { auth: ctx.github?.summary ?? null, owner: ctx.remote?.owner ?? null, repo: ctx.remote?.repo ?? null };
 
   const session = new LocalSession(opts.port);
-  const agent = opts.agent ? new AgentSession(store, { authMode, model: opts.model }) : null;
+  const agent = opts.agent ? new AgentSession(store, { authMode, model: resolveModel(opts.model) }) : null;
   if (!agent) store.setAgentStatus('disabled');
 
   const webRoot = join(PACKAGE_ROOT, 'dist', 'web');

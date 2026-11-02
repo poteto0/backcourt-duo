@@ -220,6 +220,7 @@ textarea:focus { outline: 2px solid var(--human); outline-offset: -1px; }
 /* ------------------------------------------------------------ chat */
 .chat { border-left: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; background: var(--bg); }
 .chat .agent-meta { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
+.chat .model-select { max-width: 11rem; font: inherit; font-size: 11px; color: var(--fg); background: var(--bg-3); border: 1px solid var(--border); border-radius: 6px; padding: 2px 4px; }
 .chat .agent-meta .sub { font-size: 11px; color: var(--fg-2); font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .status { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; color: var(--fg-2); white-space: nowrap; }
 .status .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--fg-2); }

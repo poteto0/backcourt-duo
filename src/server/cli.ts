@@ -23,7 +23,8 @@ Start options
   --port <n>           default 1200 (BACKCOURT_DUO_PORT)
   --host <addr>        loopback only (default 127.0.0.1)
   --auth <mode>        claude-code (default) | api-key   (BACKCOURT_DUO_AUTH)
-  --model <id>         agent model (BACKCOURT_DUO_MODEL)
+  --model <id>         agent model (BACKCOURT_DUO_MODEL, config agent.model);
+                       switchable from the chat header
   --no-open            do not open the browser
   --no-agent           diff + comments only
   --fresh              discard saved state for this branch
@@ -32,6 +33,7 @@ Start options
 Settings (~/.backcourt-duo/config.json)
   privacy.account      Claude account email: hide (default) | mask | show
                        (BACKCOURT_DUO_ACCOUNT)
+  agent.model          default agent model, e.g. "sonnet" (--model / BACKCOURT_DUO_MODEL win)
 `;
 
 const OPTIONS = {

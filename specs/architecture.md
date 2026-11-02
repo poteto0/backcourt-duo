@@ -86,6 +86,7 @@ UI の操作:
 | GET | `/api/chat` | チャット履歴 |
 | POST | `/api/chat` | `{ text }` 人間のメッセージ。presence と操作ログを添えてエージェントに送る |
 | POST | `/api/agent/interrupt` | 実行中のターンを中断する |
+| PUT | `/api/agent/model` | エージェントのモデルを切り替える（`{ model }`。specs/sessions/agent-session.md#モデルの切り替え） |
 | POST | `/api/agent/restart` | エージェントセッションを作り直す（認証を変えたあとなど） |
 | PUT | `/api/presence` | 人間のカーソル |
 | PUT | `/api/follow` | `{ followAgent }` |

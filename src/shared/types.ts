@@ -152,7 +152,18 @@ export interface AgentInfo {
   auth: AgentAuthSummary | null;
   error?: string;
   model?: string;
+  /** Models the agent can switch to (from the SDK's `supportedModels()`), once the session is up. */
+  models?: ModelOption[];
   loginInProgress: boolean;
+}
+
+export interface ModelOption {
+  /** What `setModel()` takes, e.g. an alias like `sonnet`. */
+  value: string;
+  /** The model id the alias resolves to (what the SDK reports after init). */
+  resolvedModel?: string | undefined;
+  displayName: string;
+  description: string;
 }
 
 export interface Submission {

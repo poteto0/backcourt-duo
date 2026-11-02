@@ -79,9 +79,12 @@ export function ChatPanel() {
           <strong>Review agent</strong>
           <span class="sub">
             {s().agent.auth ? `${s().agent.auth!.mode}${s().agent.auth!.account ? ` · ${s().agent.auth!.account}` : ''}${s().agent.auth!.subscription ? ` · ${s().agent.auth!.subscription}` : ''}` : ''}
-            {s().agent.model ? ` · ${s().agent.model}` : ''}
+            <Show when={!s().agent.models?.length && s().agent.model}> · {s().agent.model}</Show>
           </span>
         </div>
+        <Show when={s().agent.models?.length}>
+          <ModelPicker onError={setError} />
+        </Show>
         <div class="spacer" />
         <span class={`status st-${status()}`}>
           <span class="pulse" />
@@ -179,6 +182,34 @@ export function ChatPanel() {
         </div>
       </div>
     </aside>
+  );
+}
+
+/** Switches the agent's model for the next turns (PUT /api/agent/model). */
+function ModelPicker(props: { onError: (message: string) => void }) {
+  const agent = () => snap()!.agent;
+  // The server keeps `agent.model` as one of the option values (or a raw id the list doesn't cover).
+  const selected = () => agent().model ?? '';
+  const known = () => agent().models?.some((m) => m.value === selected()) ?? false;
+  return (
+    <select
+      class="model-select"
+      title="Model for the next turns"
+      value={selected()}
+      disabled={agent().status !== 'waiting' && agent().status !== 'thinking'}
+      onChange={(e) => {
+        const el = e.currentTarget;
+        void api.setModel(el.value).catch((err: Error) => {
+          el.value = selected();
+          props.onError(err.message);
+        });
+      }}
+    >
+      <Show when={!known() && selected()}>
+        <option value={selected()}>{selected()}</option>
+      </Show>
+      <For each={agent().models}>{(m) => <option value={m.value} title={m.description}>{m.displayName}</option>}</For>
+    </select>
   );
 }
 

@@ -16,7 +16,7 @@ backcourt-duo [start] [options]
   --port <n>            デフォルトは 1200（環境変数 BACKCOURT_DUO_PORT でも指定可）
   --host <addr>         デフォルトは 127.0.0.1。ループバック以外のアドレスは拒否する
   --auth <mode>         エージェントの認証。claude-code（デフォルト）または api-key
-  --model <id>          エージェントのモデル（省略すると Claude Code の既定モデル）
+  --model <id>          エージェントのモデル（省略すると設定ファイルの agent.model、それもなければ Claude Code の既定モデル）
   --no-open             ブラウザを開かない
   --no-agent            エージェントを起動しない（diff と pending と Submit だけを使う）
   --fresh               保存されている状態（pending、チャット、セッション）を破棄して始める
@@ -63,6 +63,9 @@ backcourt-duo [start] [options]
 {
   "privacy": {
     "account": "hide"
+  },
+  "agent": {
+    "model": "sonnet"
   }
 }
 ```
@@ -73,6 +76,7 @@ backcourt-duo [start] [options]
 
 | キー | 値 | 環境変数 | 説明 |
 |---|---|---|---|
+| `agent.model` | モデル ID またはエイリアス（例: `sonnet`）。省略時は Claude Code の既定モデル | `BACKCOURT_DUO_MODEL` | エージェントの既定モデル。`--model` がさらに優先する。起動後は UI で切り替えられる（specs/sessions/agent-session.md#モデルの切り替え） |
 | `privacy.account` | `hide`（デフォルト） / `mask` / `show` | `BACKCOURT_DUO_ACCOUNT` | Claude アカウントのメールアドレスの表示方法（specs/sessions/agent-claude-code.md#アカウントの表示） |
 
 優先順位は 環境変数 > 設定ファイル > デフォルト。

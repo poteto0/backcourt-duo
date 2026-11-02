@@ -1,11 +1,11 @@
 // AgentSession — one long-lived streaming-input query() per server (specs/sessions/agent-session.md)
-import { query, type Query, type SDKMessage, type SDKUserMessage, type Options } from '@anthropic-ai/claude-agent-sdk';
+import { query, type ModelInfo, type Query, type SDKMessage, type SDKUserMessage, type Options } from '@anthropic-ai/claude-agent-sdk';
 import type { ReviewStore } from '../store.js';
 import { isSignInError, looksLikeAuthError, resolveAgentAuth, type ResolvedAgentAuth } from '../auth/agent.js';
 import { startClaudeLogin } from '../auth/claude-login.js';
 import { createDuoServer, createDuoTools, DUO_SERVER } from './tools.js';
 import { KICKOFF_PROMPT, REVIEW_SYSTEM_PROMPT, wrapHumanMessage } from './prompts.js';
-import type { AgentAuthMode, AgentStatus, ChatMessage, Ref } from '../../shared/types.js';
+import type { AgentAuthMode, AgentStatus, ChatMessage, ModelOption, Ref } from '../../shared/types.js';
 import { formatRef } from '../../shared/types.js';
 
 const READ_ONLY_TOOLS = ['Read', 'Grep', 'Glob'];
@@ -55,8 +55,12 @@ export class AgentSession {
   private streamed = new Set<string>();
   /** tool_use id → its chat row, so an error result can flag the row without scanning the chat. */
   private toolRows = new Map<string, ChatMessage>();
+  /** Starts as --model / env / config; a switch from the UI sticks across restarts. */
+  private model: string | undefined;
 
-  constructor(private readonly store: ReviewStore, private readonly opts: AgentSessionOptions) {}
+  constructor(private readonly store: ReviewStore, private readonly opts: AgentSessionOptions) {
+    this.model = opts.model;
+  }
 
   get running(): boolean {
     return this.q !== null;
@@ -79,7 +83,6 @@ export class AgentSession {
     this.input = input;
     const tools = createDuoTools(this.store, (t) => this.system(t));
     const resume = this.store.agentSessionId;
-    const model = this.opts.model ?? process.env['BACKCOURT_DUO_MODEL'];
     const options: Options = {
       cwd: this.store.target.repoRoot,
       tools: READ_ONLY_TOOLS,
@@ -93,7 +96,7 @@ export class AgentSession {
       includePartialMessages: true,
       env: auth.env,
       ...(auth.executable ? { pathToClaudeCodeExecutable: auth.executable } : {}),
-      ...(model ? { model } : {}),
+      ...(this.model ? { model: this.model } : {}),
       ...(resume ? { resume } : {}),
       stderr: (data) => {
         if (process.env['BACKCOURT_DUO_DEBUG']) process.stderr.write(`[agent] ${data}`);
@@ -103,6 +106,14 @@ export class AgentSession {
     const q = query({ prompt: input, options });
     this.q = q;
     void this.pump(q, gen);
+    void q
+      .supportedModels()
+      .then((models) => {
+        if (gen !== this.generation) return;
+        this.store.setAgent({ models: models.map(toModelOption) });
+        this.publishModel(this.store.agent.model);
+      })
+      .catch(() => undefined);
 
     if (resume) {
       this.store.setAgentStatus('waiting');
@@ -149,6 +160,21 @@ export class AgentSession {
         await this.start(auth);
       })
       .catch(() => this.store.setAgent({ loginInProgress: false }));
+  }
+
+  /** Switch the model for the following turns (the conversation is kept). */
+  async setModel(model: string): Promise<void> {
+    await this.q?.setModel(model);
+    this.model = model;
+    this.publishModel(model);
+    this.system(`🔁 Model switched to \`${model}\`.`);
+  }
+
+  /** `agent.model` is always a picker `value`: init reports the resolved id, a switch the alias, so map both. */
+  private publishModel(model: string | undefined): void {
+    if (!model) return;
+    const option = this.store.agent.models?.find((m) => m.value === model || m.resolvedModel === model);
+    this.store.setAgent({ model: option?.value ?? model });
   }
 
   async interrupt(): Promise<void> {
@@ -214,7 +240,7 @@ export class AgentSession {
       case 'system':
         if (m.subtype === 'init') {
           this.store.setAgentSessionId(m.session_id);
-          this.store.setAgent({ model: m.model });
+          this.publishModel(m.model);
         }
         return;
       case 'auth_status':
@@ -280,6 +306,10 @@ export class AgentSession {
         return;
     }
   }
+}
+
+function toModelOption(m: ModelInfo): ModelOption {
+  return { value: m.value, resolvedModel: m.resolvedModel, displayName: m.displayName, description: m.description };
 }
 
 const num = (v: unknown) => (typeof v === 'number' ? v : undefined);

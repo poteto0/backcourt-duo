@@ -10,6 +10,7 @@ import { AccountDisplaySchema } from './schemas.js';
 /** Unknown keys are kept, so settings added by other features don't make the file invalid. */
 const ConfigSchema = z.looseObject({
   privacy: z.looseObject({ account: AccountDisplaySchema.optional() }).optional(),
+  agent: z.looseObject({ model: z.string().min(1).optional() }).optional(),
 });
 type Config = z.infer<typeof ConfigSchema>;
 
@@ -50,4 +51,9 @@ export function resolveAccountDisplay(env: NodeJS.ProcessEnv = process.env, conf
     warnings.push(`ignoring BACKCOURT_DUO_ACCOUNT="${raw}" (expected hide, mask or show)`);
   }
   return { value: config.value.privacy?.account ?? 'hide', warnings };
+}
+
+/** --model > BACKCOURT_DUO_MODEL > config `agent.model` > undefined (Claude Code's default). */
+export function resolveModel(cli: string | undefined, env: NodeJS.ProcessEnv = process.env, config: Loaded<Config> = userConfig()): string | undefined {
+  return cli || env['BACKCOURT_DUO_MODEL'] || config.value.agent?.model;
 }

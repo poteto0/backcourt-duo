@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { chmod, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadConfig, resolveAccountDisplay } from './config.js';
+import { loadConfig, resolveAccountDisplay, resolveModel } from './config.js';
 import { displayAccount, resolveAgentAuth } from './auth/agent.js';
 
 const EMAIL = 'alice@example.com';
@@ -23,6 +23,14 @@ test('resolveAccountDisplay: env > config > hide', () => {
   const bogus = resolveAccountDisplay({ BACKCOURT_DUO_ACCOUNT: 'bogus' }, mask);
   assert.equal(bogus.value, 'mask');
   assert.match(bogus.warnings[0] ?? '', /BACKCOURT_DUO_ACCOUNT/);
+});
+
+test('resolveModel: --model > env > config agent.model > undefined', () => {
+  const cfg = { value: { agent: { model: 'haiku' } }, warnings: [] };
+  assert.equal(resolveModel(undefined, {}, { value: {}, warnings: [] }), undefined);
+  assert.equal(resolveModel(undefined, {}, cfg), 'haiku');
+  assert.equal(resolveModel(undefined, { BACKCOURT_DUO_MODEL: 'sonnet' }, cfg), 'sonnet');
+  assert.equal(resolveModel('opus', { BACKCOURT_DUO_MODEL: 'sonnet' }, cfg), 'opus');
 });
 
 test('loadConfig: missing → empty, broken or invalid → ignored, unknown keys kept', async () => {
