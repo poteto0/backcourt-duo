@@ -21,6 +21,9 @@ async function guard(fn: () => ToolResult | Promise<ToolResult>): Promise<ToolRe
 
 export const DUO_SERVER = 'duo';
 
+/** `mcp__duo__focus` → `focus`; built-in tools pass through. */
+export const shortToolName = (name: string) => name.replace(`mcp__${DUO_SERVER}__`, '');
+
 export function createDuoTools(store: ReviewStore, notify: (text: string) => void) {
   return [
     tool('get_review_context', 'Overview of the review: target refs, PR title/body, changed files (stats, review state, plan notes), pending comments, presence, phase, and the chat / review languages.', {}, async () =>

@@ -36,6 +36,21 @@ stopped（サーバー終了時）
 - 切り替えた effort はモデルと同じく restart や再サインインのあとも使う（サーバーを再起動すると `--effort` / 環境変数 / 設定ファイルの値に戻る）
 - モデルが対応しない段階（例: `max` 非対応のモデル）は SDK 側で丸められる。`agent.effort` は選んだ値のまま表示する
 
+## トークン計測（デバッグ用）
+
+`BACKCOURT_DUO_DEBUG` が設定されているとき、`result` を受け取るたびに stderr へ 1 ターン 1 行で消費量を出す（削減の優先順位づけと効果測定のため）。
+
+```
+[tokens] turn=3 in=12.4k cache_read=180k cache_write=9k out=1.2k thinking=800 cost=$0.031 tools=get_review_context×1:8.2k,get_file_diff×3:21k,Read×2:6.4k
+```
+
+- `in` / `cache_read` / `cache_write` / `out` / `thinking` / `cost` は `result.modelUsage`（全モデルの合計）の前ターンとの差。`thinking` は 0 のとき省く（`out` に含まれる）
+- `modelUsage` は `query()` ごとの累積なので、`query()` を張り直す（restart・再サインイン）と差分の基準も作り直す。
+  そのため最初のターンは SDK の報告値そのまま（resume したときは前回までの累積を含む）
+- `tools` はそのターンに呼んだツールごとの「回数:結果の文字数（`tool_result` の `content`）」。MCP ツールは `mcp__duo__` を省いた名前で出す。ツールを呼ばなかったターンでは省く
+- `turn` は `query()` を張ってからのターン数
+- チャット・SSE・状態ファイルには出さない（デバッグ専用）。デバッグでないときは集計もしない
+
 ## SDK オプション
 
 | option | 値 | 理由 |

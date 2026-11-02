@@ -3,13 +3,15 @@ import { query, type ModelInfo, type Query, type SDKMessage, type SDKUserMessage
 import type { ReviewStore } from '../store.js';
 import { isSignInError, looksLikeAuthError, resolveAgentAuth, type ResolvedAgentAuth } from '../auth/agent.js';
 import { startClaudeLogin } from '../auth/claude-login.js';
-import { createDuoServer, createDuoTools, DUO_SERVER } from './tools.js';
+import { createDuoServer, createDuoTools, DUO_SERVER, shortToolName } from './tools.js';
 import { kickoffPrompt, reviewSystemPrompt, wrapHumanMessage } from './prompts.js';
+import { TokenMeter } from './usage.js';
 import type { AgentAuthMode, AgentStatus, ChatMessage, EffortLevel, ModelOption, Ref } from '../../shared/types.js';
 import { formatRef } from '../../shared/types.js';
 
 const READ_ONLY_TOOLS = ['Read', 'Grep', 'Glob'];
 const DENIED_TOOLS = ['Bash', 'Write', 'Edit', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Agent', 'Task'];
+const DEBUG = Boolean(process.env['BACKCOURT_DUO_DEBUG']);
 
 /** Minimal async queue used as the streaming prompt. */
 class InputQueue implements AsyncIterable<SDKUserMessage> {
@@ -58,6 +60,8 @@ export class AgentSession {
   private toolRows = new Map<string, ChatMessage>();
   /** Starts as --model / env / config; a switch from the UI sticks across restarts. */
   private model: string | undefined;
+  /** Per-turn token log, only under BACKCOURT_DUO_DEBUG; one per query() since its totals are per query(). */
+  private meter: TokenMeter | null = null;
 
   constructor(private readonly store: ReviewStore, private readonly opts: AgentSessionOptions) {
     this.model = opts.model;
@@ -103,12 +107,13 @@ export class AgentSession {
       ...(this.store.agent.effort ? { effort: this.store.agent.effort } : {}),
       ...(resume ? { resume } : {}),
       stderr: (data) => {
-        if (process.env['BACKCOURT_DUO_DEBUG']) process.stderr.write(`[agent] ${data}`);
+        if (DEBUG) process.stderr.write(`[agent] ${data}`);
       },
     };
 
     const q = query({ prompt: input, options });
     this.q = q;
+    this.meter = DEBUG ? new TokenMeter() : null;
     void this.pump(q, gen);
     void q
       .supportedModels()
@@ -224,6 +229,8 @@ export class AgentSession {
     try {
       for await (const m of q) {
         if (gen !== this.generation) return;
+        const tokens = this.meter?.observe(m);
+        if (tokens) process.stderr.write(`${tokens}\n`);
         this.handle(m);
       }
       if (gen === this.generation) this.store.setAgentStatus('stopped');
@@ -334,7 +341,7 @@ const str = (v: unknown) => (typeof v === 'string' ? v : undefined);
 
 /** One-line chat summary of a tool call, linking to the location it touches. */
 function describeTool(name: string, input: Record<string, unknown>, root: string): NonNullable<ChatMessage['tool']> {
-  const short = name.replace(`mcp__${DUO_SERVER}__`, '');
+  const short = shortToolName(name);
   const path = str(input['path']);
   const ref: Ref | undefined = path === undefined ? undefined : { path, startLine: num(input['startLine']) ?? num(input['line']), endLine: num(input['endLine']) ?? num(input['line']) };
   const at = ref ? formatRef(ref) : '';
