@@ -37,6 +37,7 @@ export function createDuoTools(store: ReviewStore, notify: (text: string) => voi
             return { path: f.path, oldPath: f.oldPath, status: f.status, additions: f.additions, deletions: f.deletions, binary: f.binary, reviewState: f.reviewState, priority: note?.priority, note: note?.note };
           }),
           pending: store.pending.map(({ id, path, side, line, startLine, author, body }) => ({ id, path, side, line, startLine, author, body })),
+          proposals: store.proposals.map(({ id, path, startLine, endLine, note }) => ({ id, path, startLine, endLine, note })),
           presence: store.presence,
           warnings: store.warnings.map((w) => w.message),
         });
@@ -106,6 +107,30 @@ export function createDuoTools(store: ReviewStore, notify: (text: string) => voi
       }),
     ),
 
+    tool(
+      'propose_change',
+      'Show a concrete code change inline in the diff, under new-file lines startLine..endLine (R numbers, one hunk). It is only displayed — no file is modified. The human can stage it as a GitHub suggestion comment or dismiss it.',
+      {
+        path: z.string(),
+        startLine: z.number().int().positive(),
+        endLine: z.number().int().positive().optional().describe('defaults to startLine'),
+        replacement: z.string().describe('the full new text for those lines, without diff markers; empty string = delete them'),
+        note: z.string().describe('one or two sentences: what the change does and why'),
+      },
+      async (input) =>
+        guard(() => {
+          const p = store.addProposal(input);
+          return ok({ ok: true, id: p.id, replaces: p.original });
+        }),
+    ),
+
+    tool('withdraw_proposal', 'Remove a change proposal you made (e.g. superseded by a better one).', { id: z.string() }, async ({ id }) =>
+      guard(() => {
+        store.removeProposal(id, 'agent');
+        return ok({ ok: true });
+      }),
+    ),
+
     tool('mark_file_reviewed', 'Mark a file as reviewed (the "Viewed" checkbox) once you and the human are done with it.', { path: z.string() }, async ({ path }) =>
       guard(() => {
         store.setReviewState(path, 'reviewed', 'agent');
@@ -127,7 +152,7 @@ export function createDuoServer(tools: ReturnType<typeof createDuoTools>) {
     name: DUO_SERVER,
     version: '1.0.0',
     alwaysLoad: true,
-    instructions: 'Tools that read and drive the shared backcourt-duo review state (diff, presence, plan, pending comments).',
+    instructions: 'Tools that read and drive the shared backcourt-duo review state (diff, presence, plan, pending comments, change proposals).',
     tools,
   });
 }

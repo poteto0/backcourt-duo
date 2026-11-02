@@ -49,13 +49,15 @@ stopped（サーバー終了時）
 
 | tool | 入力 | 効果 |
 |---|---|---|
-| `get_review_context` | — | target、PR（タイトルと本文）、ファイル一覧（統計、reviewState、プランのメモ）、pending、presence、phase |
+| `get_review_context` | — | target、PR（タイトルと本文）、ファイル一覧（統計、reviewState、プランのメモ）、pending、変更案、presence、phase |
 | `get_file_diff` | `{ path }` | そのファイルの diff を、各行に `L<old> R<new>` を付けたテキストで返す。コメントできる行かどうかもこれで判断できる |
 | `set_review_plan` | `{ summary, files: [{ path, priority: 'high'\|'medium'\|'low', note }] }` | プランを登録し、phase を `walkthrough` にする |
 | `focus` | `{ path, startLine?, endLine?, side?, note? }` | エージェントのカーソルを動かし、そのファイルを `in-progress` にする |
 | `get_human_focus` | — | 人間のカーソル |
 | `add_pending_comment` | `{ path, line, startLine?, side?, body }` | pending に追加する（author は agent）。ハンク外の行ならエラーを返す |
 | `update_pending_comment` / `delete_pending_comment` | `{ id, body? }` | 人間が書いたコメントも変更できるが、その操作はチャットに通知する |
+| `propose_change` | `{ path, startLine, endLine?, replacement, note }` | 変更案を diff 上にインライン表示する（RIGHT の行番号、1 ハンク内）。ファイルは変更しない。人間が suggestion として pending に積むか却下する |
+| `withdraw_proposal` | `{ id }` | 自分の変更案を取り下げる |
 | `mark_file_reviewed` | `{ path }` | `reviewed` にする |
 | `set_phase` | `{ phase: 'walkthrough'\|'wrapup' }` | |
 

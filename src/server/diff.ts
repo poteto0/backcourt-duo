@@ -143,6 +143,11 @@ export function isCommentable(file: DiffFile, side: Side, line: number): boolean
   return isCommentableRange(file, side, line, line);
 }
 
+/** Texts of new-file lines start..end (validate the range with isCommentableRange first). */
+export function rightLineTexts(file: DiffFile, start: number, end: number): string[] {
+  return file.hunks.flatMap((h) => h.lines.filter((l) => l.newLine !== undefined && l.newLine >= start && l.newLine <= end).map((l) => l.text));
+}
+
 /** Compact text rendering for the agent: every line annotated with old/new numbers. */
 export function renderFileDiffForAgent(file: DiffFile, maxLines = 1500): string {
   const out: string[] = [];

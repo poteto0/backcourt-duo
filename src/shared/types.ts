@@ -98,6 +98,24 @@ export interface PendingComment {
   updatedAt: string;
 }
 
+/**
+ * A code change the agent proposes, shown inline in the diff. It is never applied to the working tree
+ * (the agent is read-only); the human can stage it as a GitHub suggestion comment or dismiss it.
+ */
+export interface ChangeProposal {
+  id: string;
+  path: string;
+  /** New-file (RIGHT) line range the proposal replaces; both ends in one diff hunk. */
+  startLine: number;
+  endLine: number;
+  /** Current text of those lines, captured from the diff when proposed. */
+  original: string[];
+  /** Proposed lines (empty = delete the range). */
+  replacement: string[];
+  note: string;
+  createdAt: string;
+}
+
 export interface PullRequestInfo {
   number: number;
   url: string;
@@ -195,6 +213,7 @@ export interface ReviewStateSnapshot {
   presence: Presence;
   followAgent: boolean;
   pending: PendingComment[];
+  proposals: ChangeProposal[];
   agent: AgentInfo;
   github: GitHubContext;
   lastSubmission: Submission | null;

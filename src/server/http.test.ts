@@ -114,3 +114,24 @@ test('submit posts one review to the PR and clears pending', async () => {
   assert.equal(store.phase, 'idle');
   assert.equal(store.lastSubmission?.count, 1);
 });
+
+test('change proposals are shown, never applied, and can be staged as a suggestion', async () => {
+  const { app, store, session } = setup();
+  const headers = { ...host, Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json', Origin: 'http://localhost:1200' };
+  assert.throws(() => store.addProposal({ path: 'a.ts', startLine: 5, replacement: 'x', note: '' }), /inside the same diff hunk/);
+  const p = store.addProposal({ path: 'a.ts', startLine: 1, endLine: 2, replacement: 'ONE\nTWO', note: 'Uppercase both.' });
+  assert.deepEqual(p.original, ['one', 'TWO']);
+  assert.deepEqual(store.snapshot().proposals.map((x) => x.id), [p.id]);
+
+  const res = await app.request(`/api/proposals/${p.id}/stage`, { method: 'POST', headers, body: '{}' });
+  assert.equal(res.status, 200);
+  assert.equal(store.proposals.length, 0);
+  assert.equal(store.pending[0]?.startLine, 1);
+  assert.equal(store.pending[0]?.line, 2);
+  assert.equal(store.pending[0]?.body, 'Uppercase both.\n\n```suggestion\nONE\nTWO\n```');
+
+  const q = store.addProposal({ path: 'a.ts', startLine: 2, replacement: '', note: 'drop it' });
+  assert.equal((await app.request(`/api/proposals/${q.id}`, { method: 'DELETE', headers })).status, 200);
+  assert.equal(store.proposals.length, 0);
+  assert.equal((await app.request(`/api/proposals/${q.id}`, { method: 'DELETE', headers })).status, 400);
+});

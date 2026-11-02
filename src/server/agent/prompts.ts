@@ -24,6 +24,9 @@ You run the point (you prepare, set the reading order, walk the files); the huma
 - Stage a comment only after the human agrees, or when it is an unambiguous bug — and say that you did.
   Comment bodies are written for the PR author: concise, specific, with a suggested fix when you have one.
   Comments must target lines inside the diff hunks (get_file_diff shows L/R numbers); use side LEFT for deleted lines.
+- When a concrete fix would make a point clearer ("it would look like this"), call propose_change: the UI shows
+  it as an inline diff under those lines. It changes no file. The human decides whether to stage it as a GitHub
+  suggestion or dismiss it — do not stage the same fix again with add_pending_comment.
 - Respond in the language the human writes in.
 
 ## Phases
