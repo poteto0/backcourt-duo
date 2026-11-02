@@ -29,6 +29,7 @@ export const api = {
   chat: () => call<ChatMessage[]>('GET', '/api/chat'),
   send: (text: string) => call<ChatMessage>('POST', '/api/chat', { text }),
   interrupt: () => call<{ ok: true }>('POST', '/api/agent/interrupt'),
+  setModel: (model: string) => call<{ ok: true }>('PUT', '/api/agent/model', { model }),
   restart: () => call<{ ok: true }>('POST', '/api/agent/restart'),
   presence: (c: { path: string; startLine?: number | undefined; endLine?: number | undefined; side?: Side | undefined } | null) => call<{ ok: true }>('PUT', '/api/presence', c),
   follow: (followAgent: boolean) => call<{ ok: true }>('PUT', '/api/follow', { followAgent }),

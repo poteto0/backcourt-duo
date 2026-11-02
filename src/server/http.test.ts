@@ -68,6 +68,18 @@ test('submit without a PR is refused', async () => {
   assert.equal(res.status, 409);
 });
 
+test('switching the model validates the body and needs a running agent', async () => {
+  const { app, session } = setup();
+  const put = (body: unknown) =>
+    app.request('/api/agent/model', {
+      method: 'PUT',
+      headers: { ...host, Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json', Origin: 'http://localhost:1200' },
+      body: JSON.stringify(body),
+    });
+  assert.equal((await put({ model: '' })).status, 400);
+  assert.equal((await put({ model: 'sonnet' })).status, 409);
+});
+
 test('submit posts one review to the PR and clears pending', async () => {
   const { createServer } = await import('node:http');
   let received: { url?: string; body?: Record<string, unknown> } = {};

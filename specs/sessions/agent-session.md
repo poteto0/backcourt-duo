@@ -17,6 +17,16 @@ stopped（サーバー終了時）
 - `POST /api/agent/interrupt` で `query.interrupt()` を呼ぶ
 - `POST /api/agent/restart` で close して作り直す（`resume` で同じ会話を続ける）
 
+## モデルの切り替え
+
+- セッションを開始したら `query.supportedModels()` の結果を `agent.models`（`value` / `resolvedModel` / `displayName` / `description`）に入れる。
+  UI はこれがあればチャットのヘッダーにモデルのセレクトを出す
+- `PUT /api/agent/model { model }` で `query.setModel(model)` を呼び、`agent.model` を更新してチャットにシステムメッセージを出す。
+  会話はそのまま続き、次のターンから新しいモデルが使われる。エージェントが動いていなければ 409
+- 切り替えたモデルは restart や再サインインのあとも使う（サーバーを再起動すると `--model` / 環境変数 / 設定ファイルの値に戻る）
+- init が報告するのは解決済みの ID（例: `claude-sonnet-…`）、切り替えで渡すのはエイリアスなので、サーバーは `agent.model` を
+  `value` か `resolvedModel` が一致する選択肢の `value` にそろえてから store に入れる（一致しなければそのまま）。UI は `agent.model` をそのまま選択値に使う
+
 ## SDK オプション
 
 | option | 値 | 理由 |
@@ -31,7 +41,7 @@ stopped（サーバー終了時）
 | `settingSources` | `[]` | ユーザーやプロジェクトの hooks・権限設定に振る舞いを左右されないようにする（認証には影響しない） |
 | `includePartialMessages` | `true` | |
 | `resume` | 保存してあるセッション ID | 再起動しても会話を続けられるようにする |
-| `model` | `--model` / `BACKCOURT_DUO_MODEL` | 指定がなければ Claude Code の既定モデル |
+| `model` | `--model` > `BACKCOURT_DUO_MODEL` > 設定ファイルの `agent.model`（UI で切り替えた後はその値） | 指定がなければ Claude Code の既定モデル |
 | `env` | agent-claude-code.md / agent-api-key.md の規則で作った値 | |
 | `pathToClaudeCodeExecutable` | agent-claude-code.md の規則で選んだ値 | |
 

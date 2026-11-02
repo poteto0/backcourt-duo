@@ -113,6 +113,12 @@ export function createApp(deps: AppDeps): Hono {
     await deps.agent?.interrupt();
     return c.json({ ok: true });
   });
+  app.put('/api/agent/model', async (c) => {
+    const { model } = await body(c, z.object({ model: z.string().min(1).max(200) }));
+    if (!deps.agent?.running) return c.json({ error: 'the agent is not running' }, 409);
+    await deps.agent.setModel(model);
+    return c.json({ ok: true });
+  });
   app.post('/api/agent/restart', async (c) => {
     if (!deps.agent) return c.json({ error: 'agent disabled (--no-agent)' }, 409);
     await deps.agent.restart();
