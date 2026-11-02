@@ -27,6 +27,15 @@ stopped（サーバー終了時）
 - init が報告するのは解決済みの ID（例: `claude-sonnet-…`）、切り替えで渡すのはエイリアスなので、サーバーは `agent.model` を
   `value` か `resolvedModel` が一致する選択肢の `value` にそろえてから store に入れる（一致しなければそのまま）。UI は `agent.model` をそのまま選択値に使う
 
+## effort の切り替え
+
+- 各モデルの選択肢には `supportedEffortLevels`（`supportsEffort` が false のモデルでは省く）を入れる。
+  UI は選択中のモデルにこれがあるときだけ、モデルのセレクトの隣に effort のセレクト（「default」＋ そのモデルの段階）を出す
+- `PUT /api/agent/effort { effort }` で `query.applyFlagSettings({ effortLevel: effort })` を呼び、`agent.effort` を更新してチャットにシステムメッセージを出す。
+  `effort: null` はモデルの既定に戻す。会話はそのまま続き、次のターンから新しい effort が使われる。エージェントが動いていなければ 409
+- 切り替えた effort はモデルと同じく restart や再サインインのあとも使う（サーバーを再起動すると `--effort` / 環境変数 / 設定ファイルの値に戻る）
+- モデルが対応しない段階（例: `max` 非対応のモデル）は SDK 側で丸められる。`agent.effort` は選んだ値のまま表示する
+
 ## SDK オプション
 
 | option | 値 | 理由 |
@@ -42,6 +51,7 @@ stopped（サーバー終了時）
 | `includePartialMessages` | `true` | |
 | `resume` | 保存してあるセッション ID | 再起動しても会話を続けられるようにする |
 | `model` | `--model` > `BACKCOURT_DUO_MODEL` > 設定ファイルの `agent.model`（UI で切り替えた後はその値） | 指定がなければ Claude Code の既定モデル |
+| `effort` | `--effort` > `BACKCOURT_DUO_EFFORT` > 設定ファイルの `agent.effort`（UI で切り替えた後はその値） | 指定がなければモデルの既定 |
 | `env` | agent-claude-code.md / agent-api-key.md の規則で作った値 | |
 | `pathToClaudeCodeExecutable` | agent-claude-code.md の規則で選んだ値 | |
 

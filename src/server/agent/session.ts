@@ -5,7 +5,7 @@ import { isSignInError, looksLikeAuthError, resolveAgentAuth, type ResolvedAgent
 import { startClaudeLogin } from '../auth/claude-login.js';
 import { createDuoServer, createDuoTools, DUO_SERVER } from './tools.js';
 import { kickoffPrompt, reviewSystemPrompt, wrapHumanMessage } from './prompts.js';
-import type { AgentAuthMode, AgentStatus, ChatMessage, ModelOption, Ref } from '../../shared/types.js';
+import type { AgentAuthMode, AgentStatus, ChatMessage, EffortLevel, ModelOption, Ref } from '../../shared/types.js';
 import { formatRef } from '../../shared/types.js';
 
 const READ_ONLY_TOOLS = ['Read', 'Grep', 'Glob'];
@@ -43,6 +43,7 @@ class InputQueue implements AsyncIterable<SDKUserMessage> {
 export interface AgentSessionOptions {
   authMode: AgentAuthMode;
   model?: string | undefined;
+  effort?: EffortLevel | undefined;
 }
 
 export class AgentSession {
@@ -60,6 +61,8 @@ export class AgentSession {
 
   constructor(private readonly store: ReviewStore, private readonly opts: AgentSessionOptions) {
     this.model = opts.model;
+    // The store holds the effort (no alias mapping like `model`), so it survives restarts on its own.
+    if (opts.effort) store.setAgent({ effort: opts.effort });
   }
 
   get running(): boolean {
@@ -97,6 +100,7 @@ export class AgentSession {
       env: auth.env,
       ...(auth.executable ? { pathToClaudeCodeExecutable: auth.executable } : {}),
       ...(this.model ? { model: this.model } : {}),
+      ...(this.store.agent.effort ? { effort: this.store.agent.effort } : {}),
       ...(resume ? { resume } : {}),
       stderr: (data) => {
         if (process.env['BACKCOURT_DUO_DEBUG']) process.stderr.write(`[agent] ${data}`);
@@ -168,6 +172,13 @@ export class AgentSession {
     this.model = model;
     this.publishModel(model);
     this.system(`🔁 Model switched to \`${model}\`.`);
+  }
+
+  /** Switch the reasoning effort for the following turns; null goes back to the model's default. */
+  async setEffort(effort: EffortLevel | null): Promise<void> {
+    await this.q?.applyFlagSettings({ effortLevel: effort });
+    this.store.setAgent({ effort: effort ?? undefined });
+    this.system(`🧠 Effort switched to \`${effort ?? 'default'}\`.`);
   }
 
   /** `agent.model` is always a picker `value`: init reports the resolved id, a switch the alias, so map both. */
@@ -309,7 +320,13 @@ export class AgentSession {
 }
 
 function toModelOption(m: ModelInfo): ModelOption {
-  return { value: m.value, resolvedModel: m.resolvedModel, displayName: m.displayName, description: m.description };
+  return {
+    value: m.value,
+    resolvedModel: m.resolvedModel,
+    displayName: m.displayName,
+    description: m.description,
+    supportedEffortLevels: m.supportsEffort ? m.supportedEffortLevels : undefined,
+  };
 }
 
 const num = (v: unknown) => (typeof v === 'number' ? v : undefined);

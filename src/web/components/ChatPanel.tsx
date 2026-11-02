@@ -1,5 +1,5 @@
-import { createEffect, createSignal, For, Match, on, onCleanup, Show, Switch } from 'solid-js';
-import type { ChatMessage } from '../../shared/types';
+import { createEffect, createMemo, createSignal, For, Match, on, onCleanup, Show, Switch } from 'solid-js';
+import type { ChatMessage, EffortLevel } from '../../shared/types';
 import { api, ApiError } from '../api';
 import { renderMarkdown } from '../markdown';
 import { chat, composerInsert, hereRef, openFile, snap } from '../store';
@@ -90,6 +90,7 @@ export function ChatPanel() {
         </div>
         <Show when={s().agent.models?.length}>
           <ModelPicker onError={setError} />
+          <EffortPicker onError={setError} />
         </Show>
         <div class="spacer" />
         <span class={`status st-${status()}`}>
@@ -191,31 +192,61 @@ export function ChatPanel() {
   );
 }
 
-/** Switches the agent's model for the next turns (PUT /api/agent/model). */
-function ModelPicker(props: { onError: (message: string) => void }) {
-  const agent = () => snap()!.agent;
-  // The server keeps `agent.model` as one of the option values (or a raw id the list doesn't cover).
-  const selected = () => agent().model ?? '';
-  const known = () => agent().models?.some((m) => m.value === selected()) ?? false;
+/** A header select that switches an agent setting; reverts and reports when the server refuses. */
+function AgentSelect(props: { title: string; value: string; options: Array<{ value: string; label: string; title?: string }>; apply: (value: string) => Promise<unknown>; onError: (message: string) => void }) {
+  const status = () => snap()!.agent.status;
   return (
     <select
       class="model-select"
-      title="Model for the next turns"
-      value={selected()}
-      disabled={agent().status !== 'waiting' && agent().status !== 'thinking'}
+      title={props.title}
+      value={props.value}
+      disabled={status() !== 'waiting' && status() !== 'thinking'}
       onChange={(e) => {
         const el = e.currentTarget;
-        void api.setModel(el.value).catch((err: Error) => {
-          el.value = selected();
+        void props.apply(el.value).catch((err: Error) => {
+          el.value = props.value;
           props.onError(err.message);
         });
       }}
     >
-      <Show when={!known() && selected()}>
-        <option value={selected()}>{selected()}</option>
+      {/* Keep a value the list doesn't cover (e.g. a raw model id) selectable. */}
+      <Show when={props.value && !props.options.some((o) => o.value === props.value)}>
+        <option value={props.value}>{props.value}</option>
       </Show>
-      <For each={agent().models}>{(m) => <option value={m.value} title={m.description}>{m.displayName}</option>}</For>
+      <For each={props.options}>{(o) => <option value={o.value} title={o.title}>{o.label}</option>}</For>
     </select>
+  );
+}
+
+/** Switches the agent's model for the next turns (PUT /api/agent/model). */
+function ModelPicker(props: { onError: (message: string) => void }) {
+  const agent = () => snap()!.agent;
+  // The server keeps `agent.model` as one of the option values (or a raw id the list doesn't cover).
+  return (
+    <AgentSelect
+      title="Model for the next turns"
+      value={agent().model ?? ''}
+      options={(agent().models ?? []).map((m) => ({ value: m.value, label: m.displayName, title: m.description }))}
+      apply={api.setModel}
+      onError={props.onError}
+    />
+  );
+}
+
+/** Switches the reasoning effort for the next turns (PUT /api/agent/effort); hidden when the model has no effort control. */
+function EffortPicker(props: { onError: (message: string) => void }) {
+  const agent = () => snap()!.agent;
+  const levels = createMemo(() => agent().models?.find((m) => m.value === agent().model)?.supportedEffortLevels ?? []);
+  return (
+    <Show when={levels().length}>
+      <AgentSelect
+        title="Reasoning effort for the next turns"
+        value={agent().effort ?? ''}
+        options={[{ value: '', label: 'effort: default' }, ...levels().map((l) => ({ value: l, label: `effort: ${l}` }))]}
+        apply={(v) => api.setEffort((v || null) as EffortLevel | null)}
+        onError={props.onError}
+      />
+    </Show>
   );
 }
 

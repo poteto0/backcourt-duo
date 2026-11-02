@@ -4,9 +4,9 @@ import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
-import type { AccountDisplay } from '../shared/types.js';
+import type { AccountDisplay, EffortLevel } from '../shared/types.js';
 import { canonicalLanguageTag, LANGUAGE_TAG_HINT, languageName, type LanguageSetting, type LanguageSettings } from '../shared/language.js';
-import { AccountDisplaySchema } from './schemas.js';
+import { AccountDisplaySchema, EffortSchema } from './schemas.js';
 
 const LanguageTagSchema = z.string().transform((raw, ctx) => canonicalLanguageTag(raw) ?? (ctx.addIssue(`"${raw}" is ${LANGUAGE_TAG_HINT}`), z.NEVER));
 /** A plain string sets both. */
@@ -18,7 +18,7 @@ const LanguageSchema = z.preprocess(
 /** Unknown keys are kept, so settings added by other features don't make the file invalid. */
 const ConfigSchema = z.looseObject({
   privacy: z.looseObject({ account: AccountDisplaySchema.optional() }).optional(),
-  agent: z.looseObject({ model: z.string().min(1).optional() }).optional(),
+  agent: z.looseObject({ model: z.string().min(1).optional(), effort: EffortSchema.optional() }).optional(),
   language: LanguageSchema.optional(),
 });
 type Config = z.infer<typeof ConfigSchema>;
@@ -60,21 +60,32 @@ function userConfig(): Loaded<Config> {
   return (cached ??= loadConfig());
 }
 
+/** An enum-valued env var; a bad value is skipped with a warning. */
+function envEnum<T extends string>(env: NodeJS.ProcessEnv, name: string, schema: z.ZodEnum<{ [K in T]: K }>, warnings: string[]): T | undefined {
+  const raw = env[name];
+  if (!raw) return undefined;
+  const parsed = schema.safeParse(raw);
+  if (parsed.success) return parsed.data;
+  warnings.push(`ignoring ${name}="${raw}" (expected ${schema.options.join(', ')})`);
+  return undefined;
+}
+
 /** BACKCOURT_DUO_ACCOUNT > config `privacy.account` > 'hide'. */
 export function resolveAccountDisplay(env: NodeJS.ProcessEnv = process.env, config: Loaded<Config> = userConfig()): Loaded<AccountDisplay> {
   const warnings = [...config.warnings];
-  const raw = env['BACKCOURT_DUO_ACCOUNT'];
-  if (raw) {
-    const parsed = AccountDisplaySchema.safeParse(raw);
-    if (parsed.success) return { value: parsed.data, warnings };
-    warnings.push(`ignoring BACKCOURT_DUO_ACCOUNT="${raw}" (expected hide, mask or show)`);
-  }
-  return { value: config.value.privacy?.account ?? 'hide', warnings };
+  return { value: envEnum(env, 'BACKCOURT_DUO_ACCOUNT', AccountDisplaySchema, warnings) ?? config.value.privacy?.account ?? 'hide', warnings };
 }
 
 /** --model > BACKCOURT_DUO_MODEL > config `agent.model` > undefined (Claude Code's default). */
 export function resolveModel(cli: string | undefined, env: NodeJS.ProcessEnv = process.env, config: Loaded<Config> = userConfig()): string | undefined {
   return cli || env['BACKCOURT_DUO_MODEL'] || config.value.agent?.model;
+}
+
+/** --effort (validated by the CLI) > BACKCOURT_DUO_EFFORT > config `agent.effort` > undefined (the model's default). */
+export function resolveEffort(cli: EffortLevel | undefined, env: NodeJS.ProcessEnv = process.env, config: Loaded<Config> = userConfig()): Loaded<EffortLevel | undefined> {
+  const warnings: string[] = [];
+  const fromEnv = envEnum(env, 'BACKCOURT_DUO_EFFORT', EffortSchema, warnings);
+  return { value: cli ?? fromEnv ?? config.value.agent?.effort, warnings };
 }
 
 export interface LanguageFlags {

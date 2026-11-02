@@ -8,7 +8,8 @@ import { GitError } from '../git.js';
 import { ReviewStore } from '../store.js';
 import { LocalSession, isLoopbackHost } from '../auth/local.js';
 import { resolveAuthMode } from '../auth/agent.js';
-import { loadLanguage, resolveModel, type LanguageFlags } from '../config.js';
+import { loadLanguage, resolveEffort, resolveModel, type LanguageFlags } from '../config.js';
+import type { EffortLevel } from '../../shared/types.js';
 import { describeLanguage } from '../../shared/language.js';
 import { AgentSession } from '../agent/session.js';
 import { createApp } from '../http.js';
@@ -25,6 +26,7 @@ export interface StartOptions {
   host: string;
   auth?: string | undefined;
   model?: string | undefined;
+  effort?: EffortLevel | undefined;
   language: LanguageFlags;
   open: boolean;
   agent: boolean;
@@ -73,7 +75,9 @@ export async function startCommand(opts: StartOptions): Promise<number> {
   store.github = { auth: ctx.github?.summary ?? null, owner: ctx.remote?.owner ?? null, repo: ctx.remote?.repo ?? null };
 
   const session = new LocalSession(opts.port);
-  const agent = opts.agent ? new AgentSession(store, { authMode, model: resolveModel(opts.model) }) : null;
+  const effort = resolveEffort(opts.effort);
+  for (const w of effort.warnings) console.log(style.yellow(`   ${w}`));
+  const agent = opts.agent ? new AgentSession(store, { authMode, model: resolveModel(opts.model), effort: effort.value }) : null;
   if (!agent) store.setAgentStatus('disabled');
 
   const webRoot = join(PACKAGE_ROOT, 'dist', 'web');

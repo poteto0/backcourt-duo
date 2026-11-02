@@ -173,8 +173,14 @@ export interface AgentInfo {
   model?: string;
   /** Models the agent can switch to (from the SDK's `supportedModels()`), once the session is up. */
   models?: ModelOption[];
+  /** Reasoning effort for the next turns; unset = the model's default. */
+  effort?: EffortLevel | undefined;
   loginInProgress: boolean;
 }
+
+/** How hard the agent thinks (the SDK's `effort` / `/effort`). */
+export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type EffortLevel = (typeof EFFORT_LEVELS)[number];
 
 export interface ModelOption {
   /** What `setModel()` takes, e.g. an alias like `sonnet`. */
@@ -183,6 +189,8 @@ export interface ModelOption {
   resolvedModel?: string | undefined;
   displayName: string;
   description: string;
+  /** Effort levels this model accepts; absent or empty = the model has no effort control. */
+  supportedEffortLevels?: EffortLevel[] | undefined;
 }
 
 export interface Submission {

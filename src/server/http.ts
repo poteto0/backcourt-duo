@@ -13,7 +13,7 @@ import { LoginBusyError } from './auth/claude-login.js';
 import { GitHubError, submitReview } from './github.js';
 import type { ResolvedGitHubAuth } from './auth/github.js';
 import type { AgentAuthMode, HelloEvent } from '../shared/types.js';
-import { CursorSchema, PendingCreateSchema, ReviewEventSchema, ReviewStateSchema } from './schemas.js';
+import { CursorSchema, EffortSchema, PendingCreateSchema, ReviewEventSchema, ReviewStateSchema } from './schemas.js';
 import { VERSION } from './version.js';
 
 export interface AppDeps {
@@ -117,6 +117,12 @@ export function createApp(deps: AppDeps): Hono {
     const { model } = await body(c, z.object({ model: z.string().min(1).max(200) }));
     if (!deps.agent?.running) return c.json({ error: 'the agent is not running' }, 409);
     await deps.agent.setModel(model);
+    return c.json({ ok: true });
+  });
+  app.put('/api/agent/effort', async (c) => {
+    const { effort } = await body(c, z.object({ effort: EffortSchema.nullable() }));
+    if (!deps.agent?.running) return c.json({ error: 'the agent is not running' }, 409);
+    await deps.agent.setEffort(effort);
     return c.json({ ok: true });
   });
   app.post('/api/agent/restart', async (c) => {

@@ -58,26 +58,31 @@ test('mutations need a same-origin Origin and JSON', async () => {
   assert.equal(bad.status, 400);
 });
 
-test('submit without a PR is refused', async () => {
-  const { app, session } = setup();
-  const res = await app.request('/api/submit', {
-    method: 'POST',
+/** An authenticated same-origin JSON request. */
+function send({ app, session }: ReturnType<typeof setup>, method: string, path: string, body: unknown) {
+  return app.request(path, {
+    method,
     headers: { ...host, Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json', Origin: 'http://localhost:1200' },
-    body: JSON.stringify({ event: 'COMMENT', body: 'x' }),
+    body: JSON.stringify(body),
   });
+}
+
+test('submit without a PR is refused', async () => {
+  const res = await send(setup(), 'POST', '/api/submit', { event: 'COMMENT', body: 'x' });
   assert.equal(res.status, 409);
 });
 
 test('switching the model validates the body and needs a running agent', async () => {
-  const { app, session } = setup();
-  const put = (body: unknown) =>
-    app.request('/api/agent/model', {
-      method: 'PUT',
-      headers: { ...host, Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json', Origin: 'http://localhost:1200' },
-      body: JSON.stringify(body),
-    });
+  const put = (body: unknown) => send(setup(), 'PUT', '/api/agent/model', body);
   assert.equal((await put({ model: '' })).status, 400);
   assert.equal((await put({ model: 'sonnet' })).status, 409);
+});
+
+test('switching the effort validates the level and needs a running agent', async () => {
+  const put = (body: unknown) => send(setup(), 'PUT', '/api/agent/effort', body);
+  assert.equal((await put({ effort: 'turbo' })).status, 400);
+  assert.equal((await put({ effort: 'high' })).status, 409);
+  assert.equal((await put({ effort: null })).status, 409);
 });
 
 test('submit posts one review to the PR and clears pending', async () => {

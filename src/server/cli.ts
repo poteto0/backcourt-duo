@@ -3,6 +3,7 @@ import { parseArgs } from 'node:util';
 import { resolve } from 'node:path';
 import { VERSION } from './version.js';
 import { canonicalLanguageTag, LANGUAGE_TAG_HINT } from '../shared/language.js';
+import { EFFORT_LEVELS, type EffortLevel } from '../shared/types.js';
 
 const HELP = `🏀 backcourt-duo v${VERSION} — pair-review a PR with a Claude agent, locally.
 
@@ -26,6 +27,9 @@ Start options
   --auth <mode>        claude-code (default) | api-key   (BACKCOURT_DUO_AUTH)
   --model <id>         agent model (BACKCOURT_DUO_MODEL, config agent.model);
                        switchable from the chat header
+  --effort <level>     agent reasoning effort: low | medium | high | xhigh | max
+                       (BACKCOURT_DUO_EFFORT, config agent.effort);
+                       switchable from the chat header
   --lang <tag>         chat + review language, BCP 47 (BACKCOURT_DUO_LANG)
   --chat-lang <tag>    language the agent talks in (BACKCOURT_DUO_CHAT_LANG)
   --review-lang <tag>  language of comments posted to GitHub
@@ -39,6 +43,7 @@ Settings (~/.backcourt-duo/config.json)
   privacy.account      Claude account email: hide (default) | mask | show
                        (BACKCOURT_DUO_ACCOUNT)
   agent.model          default agent model, e.g. "sonnet" (--model / BACKCOURT_DUO_MODEL win)
+  agent.effort         default reasoning effort, e.g. "high" (--effort / BACKCOURT_DUO_EFFORT win)
   language             "ja" (both) or { "conversation": "ja", "review": "en" };
                        <repo>/.backcourt-duo.json can pin language.review per repository
 `;
@@ -52,6 +57,7 @@ const OPTIONS = {
   host: { type: 'string', default: '127.0.0.1' },
   auth: { type: 'string' },
   model: { type: 'string' },
+  effort: { type: 'string' },
   lang: { type: 'string' },
   'chat-lang': { type: 'string' },
   'review-lang': { type: 'string' },
@@ -81,6 +87,13 @@ function langOption(name: string, raw: string | undefined): string | undefined {
   const tag = canonicalLanguageTag(raw);
   if (!tag) throw new UsageError(`--${name} "${raw}" is ${LANGUAGE_TAG_HINT}`);
   return tag;
+}
+
+function effortOption(raw: string | undefined): EffortLevel | undefined {
+  if (raw === undefined) return undefined;
+  const level = EFFORT_LEVELS.find((l) => l === raw);
+  if (!level) throw new UsageError(`--effort must be one of ${EFFORT_LEVELS.join(', ')}`);
+  return level;
 }
 
 class UsageError extends Error {}
@@ -121,6 +134,7 @@ export async function main(argv: string[]): Promise<number> {
           host: v.host,
           auth: v.auth,
           model: v.model,
+          effort: effortOption(v.effort),
           language,
           open: !v['no-open'],
           agent: !v['no-agent'],
