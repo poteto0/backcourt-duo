@@ -23,6 +23,7 @@ interface ReviewState {
   presence: { human: Cursor | null; agent: Cursor | null };
   followAgent: boolean;                // UI がエージェントのカーソルに追従するか
   pending: PendingComment[];
+  proposals: ChangeProposal[];         // エージェントの変更案（表示のみ。ファイルには適用しない）
   agent: { status: 'starting' | 'thinking' | 'waiting' | 'error' | 'stopped' | 'signed-out'; auth: AgentAuthSummary; error?: string };
   github: { auth: GitHubAuthSummary };
   lastSubmission: { url: string; at: string; count: number } | null;
@@ -36,12 +37,21 @@ interface ReviewState {
   - `line` / `startLine` は GitHub API と同じ意味。`RIGHT` は新しい側の行番号、`LEFT` は古い側の行番号を指す
   - 作成時に「diff のハンク内にある行か」を検証する（GitHub はハンク外の行へのコメントを拒否するため）
 
+- `ChangeProposal = { id, path, startLine, endLine, original: string[], replacement: string[], note, createdAt }`
+  - エージェントが `propose_change` で作る「こう直すとどうなるか」の提示。**作業ツリーのファイルは一切変更しない**
+  - 範囲は新しい側（RIGHT）の行番号で、両端が同じハンク内にあること（そのまま GitHub の suggestion にできるように）。
+    `original` は作成時の diff から取り出した現在の行
+  - UI では範囲の最終行の下に「元の行（-）→ 提案（+）」のミニ diff として表示し、ファイルツリーに 💡 件数を出す
+  - 人間は **Stage as suggestion**（本文に ```` ```suggestion ```` ブロックを入れた pending コメントに変換。author は agent）か
+    **Dismiss** を選ぶ。どちらの操作も人間の操作ログに入る
+  - 永続化する。再起動時に `original` が現在の diff と一致しないものは捨てる
+
 store が変更されると `state` イベント（チャットを含まないスナップショット）を全 SSE クライアントに送る。
 チャットは量が多いので別系統の `chat` イベント（`append` / `delta` / `update`）として送る。
 
 ### 永続化
 
-状態は `<git-dir>/backcourt-duo/<head-branch>.json` に保存する（pending、reviewState、plan、チャットログ、エージェントのセッション ID）。
+状態は `<git-dir>/backcourt-duo/<head-branch>.json` に保存する（pending、変更案、reviewState、plan、チャットログ、エージェントのセッション ID）。
 `.git` の中に置くので誤ってコミットされない。同じブランチで再起動すると復元され、エージェントも SDK の `resume` で会話を引き継ぐ。
 `--fresh` を付けると破棄して最初から始める。Submit に成功したら pending は空にする。
 
@@ -94,5 +104,7 @@ UI の操作:
 | POST | `/api/pending` | pending コメントの作成 |
 | PATCH | `/api/pending/:id` | 本文の編集 |
 | DELETE | `/api/pending/:id` | 削除 |
+| POST | `/api/proposals/:id/stage` | 変更案を suggestion 付きの pending コメントに変換する |
+| DELETE | `/api/proposals/:id` | 変更案を却下する |
 | POST | `/api/submit` | `{ event: 'COMMENT'|'APPROVE'|'REQUEST_CHANGES', body }` PR に投稿 |
 | POST | `/api/auth/claude/login` | `claude auth login --claudeai` を起動する（サブスクでのサインイン） |

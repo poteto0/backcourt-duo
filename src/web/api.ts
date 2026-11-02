@@ -1,4 +1,4 @@
-import type { ChatEvent, ChatMessage, DiffFile, HelloEvent, PendingComment, ReviewEvent, ReviewState, ReviewStateSnapshot, Side } from '../shared/types';
+import type { ChangeProposal, ChatEvent, ChatMessage, DiffFile, HelloEvent, PendingComment, ReviewEvent, ReviewState, ReviewStateSnapshot, Side } from '../shared/types';
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number, readonly details: string[] = []) {
@@ -37,6 +37,8 @@ export const api = {
   addPending: (c: { path: string; line: number; startLine?: number | undefined; side: Side; body: string }) => call<PendingComment>('POST', '/api/pending', c),
   editPending: (id: string, body: string) => call<PendingComment>('PATCH', `/api/pending/${encodeURIComponent(id)}`, { body }),
   deletePending: (id: string) => call<PendingComment>('DELETE', `/api/pending/${encodeURIComponent(id)}`),
+  stageProposal: (id: string) => call<PendingComment>('POST', `/api/proposals/${encodeURIComponent(id)}/stage`),
+  dismissProposal: (id: string) => call<ChangeProposal>('DELETE', `/api/proposals/${encodeURIComponent(id)}`),
   submit: (event: ReviewEvent, body: string) => call<{ ok: true; url: string }>('POST', '/api/submit', { event, body }),
   claudeLogin: () => call<{ ok: true }>('POST', '/api/auth/claude/login'),
 };

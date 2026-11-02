@@ -330,6 +330,8 @@ function describeTool(name: string, input: Record<string, unknown>, root: string
     add_pending_comment: () => `💬 staged comment on ${at}`,
     update_pending_comment: () => `✏️ edited pending ${str(input['id']) ?? ''}`,
     delete_pending_comment: () => `🗑️ deleted pending ${str(input['id']) ?? ''}`,
+    propose_change: () => `💡 proposed a change on ${at}`,
+    withdraw_proposal: () => `↩️ withdrew proposal ${str(input['id']) ?? ''}`,
     mark_file_reviewed: () => `✅ marked ${at} reviewed`,
     set_phase: () => `🏁 phase → ${str(input['phase']) ?? ''}`,
     Read: () => `📖 Read ${(str(input['file_path']) ?? '').replace(`${root}/`, '')}`,

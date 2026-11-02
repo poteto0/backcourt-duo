@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createSignal, For, on, Show } from 'solid-js';
-import type { DiffFile, DiffLine, PendingComment, Side } from '../../shared/types';
+import type { ChangeProposal, DiffFile, DiffLine, PendingComment, Side } from '../../shared/types';
 import { formatRef } from '../../shared/types';
 import { api, ApiError } from '../api';
 import { renderMarkdown } from '../markdown';
@@ -56,6 +56,24 @@ export function DiffView() {
     return m;
   });
   const commentsAt = (k: LineKey): PendingComment[] => commentsByKey().get(keyStr(k)) ?? [];
+  /** Change proposals of the viewed file, keyed by their last line (where the card is shown). */
+  const proposalsByKey = createMemo(() => {
+    const m = new Map<string, ChangeProposal[]>();
+    for (const p of s().proposals) {
+      if (p.path !== viewPath()) continue;
+      const k = keyStr({ side: 'RIGHT', line: p.endLine });
+      m.set(k, [...(m.get(k) ?? []), p]);
+    }
+    return m;
+  });
+  const proposalsAt = (k: LineKey): ChangeProposal[] => proposalsByKey().get(keyStr(k)) ?? [];
+  /** New-file lines of the viewed file covered by a proposal, so each row checks in O(1). */
+  const proposedLines = createMemo(() => {
+    const set = new Set<number>();
+    for (const list of proposalsByKey().values()) for (const p of list) for (let n = p.startLine; n <= p.endLine; n++) set.add(n);
+    return set;
+  });
+  const inProposal = (k: LineKey) => k.side === 'RIGHT' && proposedLines().has(k.line);
 
   // Scroll on navigation requests (human clicks, follow-agent).
   createEffect(
@@ -185,7 +203,7 @@ export function DiffView() {
                                   <>
                                     <tr
                                       data-key={keyStr(k)}
-                                      classList={{ line: true, [l.kind]: true, sel: inSelection(k), agent: inAgentRange(k) }}
+                                      classList={{ line: true, [l.kind]: true, sel: inSelection(k), agent: inAgentRange(k), proposed: inProposal(k) }}
                                     >
                                       <td class="ln" onClick={(e) => clickLine(k, e)}>
                                         {l.oldLine ?? ''}
@@ -204,9 +222,10 @@ export function DiffView() {
                                         </Show>
                                       </td>
                                     </tr>
-                                    <Show when={commentsAt(k).length || (draft()?.side === k.side && draft()?.end === k.line)}>
+                                    <Show when={commentsAt(k).length || proposalsAt(k).length || (draft()?.side === k.side && draft()?.end === k.line)}>
                                       <tr class="thread-row">
                                         <td colspan="3">
+                                          <For each={proposalsAt(k)}>{(p) => <Proposal p={p} />}</For>
                                           <For each={commentsAt(k)}>{(c) => <Comment c={c} />}</For>
                                           <Show when={draft()?.side === k.side && draft()?.end === k.line}>
                                             <CommentForm draft={draft()!} path={f().path} onDone={() => setDraft(null)} />
@@ -329,5 +348,57 @@ function Comment(props: { c: PendingComment }) {
         </div>
       </Show>
     </div>
+  );
+}
+
+function Proposal(props: { p: ChangeProposal }) {
+  const [error, setError] = createSignal<string | null>(null);
+  const act = (fn: () => Promise<unknown>) => () => fn().catch((err: unknown) => setError(err instanceof ApiError ? err.message : String(err)));
+  return (
+    <div class="comment agent proposal">
+      <div class="c-head">
+        <span class="who agent">🤖</span>
+        <span class="author">Proposed change</span>
+        <span class="tag">
+          L{props.p.startLine}
+          {props.p.endLine !== props.p.startLine ? `–L${props.p.endLine}` : ''}
+        </span>
+        <span class="tag" title="Shown for discussion only; no file was modified">not applied</span>
+        <div class="spacer" />
+        <button class="btn ghost xs" title="Add as a pending comment with a GitHub suggestion block" onClick={act(() => api.stageProposal(props.p.id))}>
+          Stage as suggestion
+        </button>
+        <button class="btn ghost xs danger" onClick={act(() => api.dismissProposal(props.p.id))}>
+          Dismiss
+        </button>
+      </div>
+      <Show when={props.p.note}>
+        <div class="md" innerHTML={renderMarkdown(props.p.note)} onClick={onRefClick} />
+      </Show>
+      <table class="diff proposal-diff">
+        <tbody>
+          <ProposalLines kind="del" lines={props.p.original} />
+          <ProposalLines kind="add" lines={props.p.replacement} />
+        </tbody>
+      </table>
+      <Show when={error()}>
+        <div class="error">{error()}</div>
+      </Show>
+    </div>
+  );
+}
+
+function ProposalLines(props: { kind: 'add' | 'del'; lines: string[] }) {
+  return (
+    <For each={props.lines}>
+      {(t) => (
+        <tr class={`line ${props.kind}`}>
+          <td class="code">
+            <span class="marker">{props.kind === 'add' ? '+' : '-'}</span>
+            <span class="text">{t}</span>
+          </td>
+        </tr>
+      )}
+    </For>
   );
 }

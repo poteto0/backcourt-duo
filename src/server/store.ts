@@ -3,11 +3,12 @@ import { EventEmitter } from 'node:events';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { isCommentable, isCommentableRange } from './diff.js';
+import { isCommentable, isCommentableRange, rightLineTexts } from './diff.js';
 import type {
   Actor,
   AgentInfo,
   AgentStatus,
+  ChangeProposal,
   ChatEvent,
   ChatMessage,
   CursorInput,
@@ -33,6 +34,7 @@ interface Persisted {
   headSha: string;
   mergeBaseSha: string;
   pending: PendingComment[];
+  proposals?: ChangeProposal[];
   reviewStates: Record<string, { state: ReviewState; by?: Actor }>;
   plan: ReviewPlan | null;
   phase: Phase;
@@ -55,6 +57,7 @@ export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] 
   presence: Presence = { human: null, agent: null };
   followAgent = true;
   pending: PendingComment[] = [];
+  proposals: ChangeProposal[] = [];
   agent: AgentInfo = { status: 'starting', auth: null, loginInProgress: false };
   github: GitHubContext = { auth: null, owner: null, repo: null };
   lastSubmission: Submission | null = null;
@@ -112,6 +115,7 @@ export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] 
       presence: this.presence,
       followAgent: this.followAgent,
       pending: this.pending,
+      proposals: this.proposals,
       agent: this.agent,
       github: this.github,
       lastSubmission: this.lastSubmission,
@@ -143,6 +147,10 @@ export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] 
     if (data.version !== 1) return false;
     // Pending comments survive only if their lines still exist in this diff.
     this.pending = data.pending.filter((c) => this.validateLocation(c.path, c.side, c.line, c.startLine) === null);
+    // Proposals survive only if the lines they replace are unchanged.
+    this.proposals = (data.proposals ?? []).filter(
+      (p) => this.validateLocation(p.path, 'RIGHT', p.endLine, p.startLine) === null && rightLineTexts(this.diffByPath.get(p.path)!, p.startLine, p.endLine).join('\n') === p.original.join('\n'),
+    );
     for (const f of this.files) {
       const rs = data.reviewStates[f.path];
       if (rs) {
@@ -177,6 +185,7 @@ export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] 
       headSha: this.target.headSha,
       mergeBaseSha: this.target.mergeBaseSha,
       pending: this.pending,
+      proposals: this.proposals,
       reviewStates: Object.fromEntries(
         this.files.filter((f) => f.reviewState !== 'unvisited').map((f) => [f.path, f.reviewedBy ? { state: f.reviewState, by: f.reviewedBy } : { state: f.reviewState }]),
       ),
@@ -333,6 +342,46 @@ export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] 
     this.pending = this.pending.filter((x) => x.id !== id);
     if (by === 'human') this.logActivity(`deleted pending comment ${id} (${c.author}) on ${formatRef(commentRef(c))}`);
     this.changed();
+    return c;
+  }
+
+  // ------------------------------------------------------------ change proposals (never applied to files)
+
+  addProposal(input: { path: string; startLine: number; endLine?: number | undefined; replacement: string; note: string }): ChangeProposal {
+    const endLine = input.endLine ?? input.startLine;
+    const err = this.validateLocation(input.path, 'RIGHT', endLine, input.startLine);
+    if (err) throw new StoreError(`${err} (proposals use new-file R line numbers)`);
+    const original = rightLineTexts(this.diffByPath.get(input.path)!, input.startLine, endLine);
+    const replacement = input.replacement === '' ? [] : input.replacement.replace(/\n$/, '').split('\n');
+    const p: ChangeProposal = { id: `p_${++this.seq}_${randomUUID().slice(0, 6)}`, path: input.path, startLine: input.startLine, endLine, original, replacement, note: input.note.trim(), createdAt: now() };
+    this.proposals = [...this.proposals, p];
+    this.changed();
+    return p;
+  }
+
+  private takeProposal(id: string): ChangeProposal {
+    const p = this.proposals.find((x) => x.id === id);
+    if (!p) throw new StoreError(`no change proposal ${id}`);
+    this.proposals = this.proposals.filter((x) => x.id !== id);
+    return p;
+  }
+
+  removeProposal(id: string, by: Actor): ChangeProposal {
+    const p = this.takeProposal(id);
+    if (by === 'human') this.logActivity(`dismissed change proposal ${id} on ${formatRef(p)}`);
+    this.changed();
+    return p;
+  }
+
+  /** Turn a proposal into a pending comment with a GitHub suggestion block (the human's call). */
+  stageProposal(id: string): PendingComment {
+    const p = this.proposals.find((x) => x.id === id);
+    if (!p) throw new StoreError(`no change proposal ${id}`);
+    const code = p.replacement.join('\n');
+    const fence = '`'.repeat(Math.max(3, ...[...code.matchAll(/`+/g)].map((m) => m[0].length + 1)));
+    const c = this.addPending({ path: p.path, line: p.endLine, startLine: p.startLine, body: `${p.note}\n\n${fence}suggestion\n${code}${code ? '\n' : ''}${fence}`, author: 'agent' });
+    this.takeProposal(id); // addPending already broadcast; this rides the same coalesced emit
+    this.logActivity(`staged change proposal ${id} as pending comment ${c.id}`);
     return c;
   }
 

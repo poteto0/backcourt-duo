@@ -152,6 +152,10 @@ export function createApp(deps: AppDeps): Hono {
   });
   app.delete('/api/pending/:id', (c) => c.json(store.deletePending(c.req.param('id'), 'human')));
 
+  // ------------------------------------------------------------ change proposals
+  app.post('/api/proposals/:id/stage', (c) => c.json(store.stageProposal(c.req.param('id'))));
+  app.delete('/api/proposals/:id', (c) => c.json(store.removeProposal(c.req.param('id'), 'human')));
+
   // ------------------------------------------------------------ submit
   app.post('/api/submit', async (c) => {
     const { event, body: reviewBody } = await body(c, z.object({ event: ReviewEventSchema, body: z.string().max(65_000) }));

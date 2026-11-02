@@ -193,6 +193,10 @@ table.diff tr.thread-row td { padding: 8px 12px 8px 116px; background: var(--bg-
 .comment .c-head { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--bg-2); border-bottom: 1px solid var(--border); font-size: 12px; }
 .comment .author { font-weight: 600; }
 .comment .md, .comment textarea { padding: 8px 12px; }
+/* agent change proposals: shown inline, never applied */
+tr.line.proposed td.ln + td.ln { box-shadow: inset -3px 0 0 var(--accent); }
+.proposal .proposal-diff { border-top: 1px solid var(--border); }
+.proposal .error { padding: 0 12px 8px; }
 .tag { font-size: 11px; border: 1px solid var(--border); border-radius: 999px; padding: 0 6px; color: var(--fg-2); }
 .tag.pending { color: var(--warn); border-color: var(--warn); }
 .comment-form { border: 1px solid var(--human); border-radius: 8px; background: var(--bg); padding: 8px; }

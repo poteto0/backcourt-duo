@@ -18,12 +18,10 @@ export function FileTree(props: { order: Order; onOrder: (o: Order) => void }) {
     }
     return list;
   });
-  const pendingCounts = createMemo(() => {
-    const m = new Map<string, number>();
-    for (const c of s().pending) m.set(c.path, (m.get(c.path) ?? 0) + 1);
-    return m;
-  });
+  const pendingCounts = createMemo(() => countByPath(s().pending));
+  const proposalCounts = createMemo(() => countByPath(s().proposals));
   const pendingCount = (path: string) => pendingCounts().get(path) ?? 0;
+  const proposalCount = (path: string) => proposalCounts().get(path) ?? 0;
 
   return (
     <nav class="filetree">
@@ -74,6 +72,9 @@ export function FileTree(props: { order: Order; onOrder: (o: Order) => void }) {
                     <Show when={pendingCount(f.path)}>
                       <span class="pc" title="pending comments">💬{pendingCount(f.path)}</span>
                     </Show>
+                    <Show when={proposalCount(f.path)}>
+                      <span class="pc" title="agent change proposals (not applied)">💡{proposalCount(f.path)}</span>
+                    </Show>
                     <Show when={agentHere()}>
                       <span class="who agent" title="Agent is here">🤖</span>
                     </Show>
@@ -92,4 +93,10 @@ export function FileTree(props: { order: Order; onOrder: (o: Order) => void }) {
       </ul>
     </nav>
   );
+}
+
+function countByPath(items: ReadonlyArray<{ path: string }>): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const x of items) m.set(x.path, (m.get(x.path) ?? 0) + 1);
+  return m;
 }
