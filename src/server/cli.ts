@@ -2,6 +2,7 @@
 import { parseArgs } from 'node:util';
 import { resolve } from 'node:path';
 import { VERSION } from './version.js';
+import { canonicalLanguageTag, LANGUAGE_TAG_HINT } from '../shared/language.js';
 
 const HELP = `🏀 backcourt-duo v${VERSION} — pair-review a PR with a Claude agent, locally.
 
@@ -25,6 +26,10 @@ Start options
   --auth <mode>        claude-code (default) | api-key   (BACKCOURT_DUO_AUTH)
   --model <id>         agent model (BACKCOURT_DUO_MODEL, config agent.model);
                        switchable from the chat header
+  --lang <tag>         chat + review language, BCP 47 (BACKCOURT_DUO_LANG)
+  --chat-lang <tag>    language the agent talks in (BACKCOURT_DUO_CHAT_LANG)
+  --review-lang <tag>  language of comments posted to GitHub
+                       (BACKCOURT_DUO_REVIEW_LANG)
   --no-open            do not open the browser
   --no-agent           diff + comments only
   --fresh              discard saved state for this branch
@@ -34,6 +39,8 @@ Settings (~/.backcourt-duo/config.json)
   privacy.account      Claude account email: hide (default) | mask | show
                        (BACKCOURT_DUO_ACCOUNT)
   agent.model          default agent model, e.g. "sonnet" (--model / BACKCOURT_DUO_MODEL win)
+  language             "ja" (both) or { "conversation": "ja", "review": "en" };
+                       <repo>/.backcourt-duo.json can pin language.review per repository
 `;
 
 const OPTIONS = {
@@ -45,6 +52,9 @@ const OPTIONS = {
   host: { type: 'string', default: '127.0.0.1' },
   auth: { type: 'string' },
   model: { type: 'string' },
+  lang: { type: 'string' },
+  'chat-lang': { type: 'string' },
+  'review-lang': { type: 'string' },
   'no-open': { type: 'boolean', default: false },
   'no-agent': { type: 'boolean', default: false },
   fresh: { type: 'boolean', default: false },
@@ -64,6 +74,13 @@ function intOption(name: string, raw: string | undefined): number | undefined {
   const n = Number(raw);
   if (!Number.isInteger(n) || n <= 0) throw new UsageError(`--${name} must be a positive integer`);
   return n;
+}
+
+function langOption(name: string, raw: string | undefined): string | undefined {
+  if (raw === undefined) return undefined;
+  const tag = canonicalLanguageTag(raw);
+  if (!tag) throw new UsageError(`--${name} "${raw}" is ${LANGUAGE_TAG_HINT}`);
+  return tag;
 }
 
 class UsageError extends Error {}
@@ -90,6 +107,7 @@ export async function main(argv: string[]): Promise<number> {
 
   try {
     const port = intOption('port', v.port ?? process.env['BACKCOURT_DUO_PORT']) ?? 1200;
+    const language = { lang: langOption('lang', v.lang), chatLang: langOption('chat-lang', v['chat-lang']), reviewLang: langOption('review-lang', v['review-lang']) };
     switch (command) {
       case 'start': {
         const { startCommand } = await import('./commands/start.js');
@@ -103,6 +121,7 @@ export async function main(argv: string[]): Promise<number> {
           host: v.host,
           auth: v.auth,
           model: v.model,
+          language,
           open: !v['no-open'],
           agent: !v['no-agent'],
           fresh: v.fresh,
@@ -118,7 +137,7 @@ export async function main(argv: string[]): Promise<number> {
       }
       case 'doctor': {
         const { doctorCommand } = await import('./commands/doctor.js');
-        return await doctorCommand({ cwd, base: v.base, pr: intOption('pr', v.pr), port, auth: v.auth, json: v.json });
+        return await doctorCommand({ cwd, base: v.base, pr: intOption('pr', v.pr), port, auth: v.auth, language, json: v.json });
       }
       case 'help':
         console.log(HELP);

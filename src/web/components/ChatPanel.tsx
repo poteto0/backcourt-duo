@@ -4,6 +4,7 @@ import { api, ApiError } from '../api';
 import { renderMarkdown } from '../markdown';
 import { chat, composerInsert, hereRef, openFile, snap } from '../store';
 import { onRefClick } from './refs';
+import { describeLanguage } from '../../shared/language';
 
 const STATUS_LABEL: Record<string, string> = {
   disabled: 'Agent disabled',
@@ -32,6 +33,7 @@ export function ChatPanel() {
   let stick = true;
 
   const status = () => s().agent.status;
+  const languageTitle = () => `${describeLanguage(s().language)}\nSet with --lang / --chat-lang / --review-lang or ~/.backcourt-duo/config.json (restart to apply)`;
   const canSend = () => status() === 'waiting' || status() === 'thinking';
 
   // Auto-scroll while the user is at the bottom.
@@ -80,6 +82,10 @@ export function ChatPanel() {
           <span class="sub">
             {s().agent.auth ? `${s().agent.auth!.mode}${s().agent.auth!.account ? ` · ${s().agent.auth!.account}` : ''}${s().agent.auth!.subscription ? ` · ${s().agent.auth!.subscription}` : ''}` : ''}
             <Show when={!s().agent.models?.length && s().agent.model}> · {s().agent.model}</Show>
+            <span class="lang" title={languageTitle()}>
+              {' '}
+              · 💬 {s().language.conversation?.tag ?? 'auto'} · 📝 {s().language.review?.tag ?? 'auto'}
+            </span>
           </span>
         </div>
         <Show when={s().agent.models?.length}>

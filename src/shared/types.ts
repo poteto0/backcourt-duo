@@ -1,5 +1,6 @@
 // Protocol types shared by the Node server and the SolidJS UI.
 // Keep this file free of runtime dependencies (types + tiny pure helpers only).
+import type { LanguageSettings } from './language.js';
 
 export type Side = 'LEFT' | 'RIGHT';
 
@@ -224,6 +225,8 @@ export interface ReviewStateSnapshot {
   github: GitHubContext;
   lastSubmission: Submission | null;
   recommendation: ReviewRecommendation | null;
+  /** Chat and review (GitHub) languages, fixed at startup (specs/commands/start.md#言語). */
+  language: LanguageSettings;
   warnings: Warning[];
 }
 

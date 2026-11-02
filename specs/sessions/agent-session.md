@@ -37,7 +37,7 @@ stopped（サーバー終了時）
 | `disallowedTools` | `Bash`, `Write`, `Edit`, `NotebookEdit`, `WebFetch`, `WebSearch`, `Agent` | 念のため明示的にも拒否する |
 | `permissionMode` | `'dontAsk'` | 許可リストにないツールは確認せずに拒否する（人間に許可を求めるダイアログは出さない） |
 | `mcpServers` | `{ duo: createSdkMcpServer(...) }` | レビュー操作のツール |
-| `systemPrompt` | `{ type: 'preset', preset: 'claude_code', append: REVIEW_PROMPT }` | Claude Code の基本プロンプトにレビュー役の指示を足す |
+| `systemPrompt` | `{ type: 'preset', preset: 'claude_code', append: reviewSystemPrompt(language) }` | Claude Code の基本プロンプトにレビュー役の指示と言語の指示（下記）を足す |
 | `settingSources` | `[]` | ユーザーやプロジェクトの hooks・権限設定に振る舞いを左右されないようにする（認証には影響しない） |
 | `includePartialMessages` | `true` | |
 | `resume` | 保存してあるセッション ID | 再起動しても会話を続けられるようにする |
@@ -49,7 +49,7 @@ stopped（サーバー終了時）
 
 | tool | 入力 | 効果 |
 |---|---|---|
-| `get_review_context` | — | target、PR（タイトルと本文）、ファイル一覧（統計、reviewState、プランのメモ）、pending、変更案、presence、phase |
+| `get_review_context` | — | target、PR（タイトルと本文）、ファイル一覧（統計、reviewState、プランのメモ）、pending、変更案、presence、phase、`language` |
 | `get_file_diff` | `{ path }` | そのファイルの diff を、各行に `L<old> R<new>` を付けたテキストで返す。コメントできる行かどうかもこれで判断できる |
 | `set_review_plan` | `{ summary, files: [{ path, priority: 'high'\|'medium'\|'low', note }] }` | プランを登録し、phase を `walkthrough` にする |
 | `focus` | `{ path, startLine?, endLine?, side?, note? }` | エージェントのカーソルを動かし、そのファイルを `in-progress` にする |
@@ -63,6 +63,23 @@ stopped（サーバー終了時）
 | `set_phase` | `{ phase: 'walkthrough'\|'wrapup' }` | |
 
 すべてのツールの結果は JSON テキストで返す。失敗した場合は `isError: true` にして理由を返す。
+
+## 言語
+
+store の `language`（specs/commands/start.md#言語）から、システムプロンプトの `## Language` 節を組み立てる。
+
+- 会話: 指定があれば「人間とは Japanese (ja) で話す（概要、プラン、説明、質問）」。なければ「人間が書いた言語で話す。まだ何も書いていなければ英語」
+- review: 「GitHub に投稿されるもの（`add_pending_comment` / `update_pending_comment` の本文、`propose_change` の説明、`recommend_review` の総評）は English (en) で書く」。
+  未指定なら「PR のタイトルと本文の言語で書く（PR がない・判断できなければ英語）」
+- 2 つが違うときは、コメント案を出すときに投稿される本文そのものを見せ（必要なら会話の言語で 1 行の要約を添える）、
+  会話の言語で「積んでおいて」と頼まれたら review の言語に翻訳してから積むよう指示する
+- コードの識別子、`@path#L` 参照、コードブロック、suggestion ブロックは翻訳しない
+- 人間が書いたコメントは頼まれない限り翻訳・書き換えをしない。頼まれたら訳文を先に見せ、確認を得てから更新する
+- 会話の言語が指定されていれば、キックオフの末尾に「Reply in Japanese.」を足す
+
+resume したときもシステムプロンプトは現在の設定で組み立て直す。さらに、前回の会話を始めたときの言語（状態ファイルに保存しておく）と
+今の設定が違えば、store の操作ログに「言語設定が変わった（`chat ja (config) · review en (--review-lang)`）。以降は Language 節に従う」を 1 行積む。
+次の人間メッセージの `<activity_since_last_turn>` で 1 度だけエージェントに届く（それまでの会話が別の言語で進んでいても、以降は新しい設定に従わせるため）。
 
 ## 人間メッセージの包み方
 

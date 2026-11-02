@@ -23,7 +23,7 @@ export const DUO_SERVER = 'duo';
 
 export function createDuoTools(store: ReviewStore, notify: (text: string) => void) {
   return [
-    tool('get_review_context', 'Overview of the review: target refs, PR title/body, changed files (stats, review state, plan notes), pending comments, presence and phase.', {}, async () =>
+    tool('get_review_context', 'Overview of the review: target refs, PR title/body, changed files (stats, review state, plan notes), pending comments, presence, phase, and the chat / review languages.', {}, async () =>
       guard(() => {
         const notes = new Map(store.plan?.files.map((p) => [p.path, p]) ?? []);
         const { target, pr } = store;
@@ -39,6 +39,7 @@ export function createDuoTools(store: ReviewStore, notify: (text: string) => voi
           pending: store.pending.map(({ id, path, side, line, startLine, author, body }) => ({ id, path, side, line, startLine, author, body })),
           proposals: store.proposals.map(({ id, path, startLine, endLine, note }) => ({ id, path, startLine, endLine, note })),
           recommendation: store.recommendation,
+          language: store.language,
           presence: store.presence,
           warnings: store.warnings.map((w) => w.message),
         });

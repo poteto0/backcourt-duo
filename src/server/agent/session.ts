@@ -4,7 +4,7 @@ import type { ReviewStore } from '../store.js';
 import { isSignInError, looksLikeAuthError, resolveAgentAuth, type ResolvedAgentAuth } from '../auth/agent.js';
 import { startClaudeLogin } from '../auth/claude-login.js';
 import { createDuoServer, createDuoTools, DUO_SERVER } from './tools.js';
-import { KICKOFF_PROMPT, REVIEW_SYSTEM_PROMPT, wrapHumanMessage } from './prompts.js';
+import { kickoffPrompt, reviewSystemPrompt, wrapHumanMessage } from './prompts.js';
 import type { AgentAuthMode, AgentStatus, ChatMessage, ModelOption, Ref } from '../../shared/types.js';
 import { formatRef } from '../../shared/types.js';
 
@@ -91,7 +91,7 @@ export class AgentSession {
       // Anything not in allowedTools is denied without prompting (read-only review session).
       permissionMode: 'dontAsk',
       mcpServers: { [DUO_SERVER]: createDuoServer(tools) },
-      systemPrompt: { type: 'preset', preset: 'claude_code', append: REVIEW_SYSTEM_PROMPT },
+      systemPrompt: { type: 'preset', preset: 'claude_code', append: reviewSystemPrompt(this.store.language) },
       settingSources: [],
       includePartialMessages: true,
       env: auth.env,
@@ -121,7 +121,7 @@ export class AgentSession {
     } else {
       if (!this.store.plan) this.store.setPhase('preparing');
       this.system('🏀 Agent is preparing the review…');
-      this.send(KICKOFF_PROMPT);
+      this.send(kickoffPrompt(this.store.language));
     }
   }
 

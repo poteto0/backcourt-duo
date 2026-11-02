@@ -1,9 +1,9 @@
 import { createEffect, createMemo, createSignal, For, on, Show } from 'solid-js';
 import type { ChangeProposal, DiffFile, DiffLine, PendingComment, Side } from '../../shared/types';
-import { formatRef } from '../../shared/types';
+import { commentRef, formatRef } from '../../shared/types';
 import { api, ApiError } from '../api';
 import { renderMarkdown } from '../markdown';
-import { currentSelection, diff, hereRef, insertIntoComposer, openFile, scrollRequest, setFollow, setSelection, snap, viewPath } from '../store';
+import { currentSelection, diff, hereRef, inOtherLanguage, insertIntoComposer, openFile, scrollRequest, setFollow, setSelection, snap, viewPath } from '../store';
 import { onRefClick } from './refs';
 
 interface LineKey {
@@ -329,6 +329,18 @@ function Comment(props: { c: PendingComment }) {
           </span>
         </Show>
         <div class="spacer" />
+        <Show when={props.c.author === 'human' && inOtherLanguage(props.c) && snap()!.language.review}>
+          {(review) => (
+            <button
+              class="btn ghost xs"
+              title="Ask the agent for a translation; you confirm it in the chat before the comment changes"
+              disabled={snap()!.agent.status !== 'waiting'}
+              onClick={() => void api.send(`Please translate my pending comment ${props.c.id} (${formatRef(commentRef(props.c))}) into ${review().name}.`)}
+            >
+              Translate to {review().name}
+            </button>
+          )}
+        </Show>
         <button class="btn ghost xs" onClick={() => { setText(props.c.body); setEditing(!editing()); }}>
           Edit
         </button>

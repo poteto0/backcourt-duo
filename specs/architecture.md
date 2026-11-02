@@ -28,6 +28,7 @@ interface ReviewState {
   github: { auth: GitHubAuthSummary };
   lastSubmission: { url: string; at: string; count: number } | null;
   recommendation: { event: 'COMMENT'|'APPROVE'|'REQUEST_CHANGES'; body: string } | null; // エージェントの推奨案
+  language: { conversation: LanguageSetting | null; review: LanguageSetting | null }; // 起動時に解決した言語（実行中は変わらない）
 }
 ```
 
@@ -37,6 +38,9 @@ interface ReviewState {
 - `PendingComment = { id, path, side: 'LEFT'|'RIGHT', line, startLine?, body, author: 'human'|'agent', createdAt, updatedAt }`
   - `line` / `startLine` は GitHub API と同じ意味。`RIGHT` は新しい側の行番号、`LEFT` は古い側の行番号を指す
   - 作成時に「diff のハンク内にある行か」を検証する（GitHub はハンク外の行へのコメントを拒否するため）
+
+- `LanguageSetting = { tag, name, source }`（例: `{ tag: 'ja', name: 'Japanese', source: 'config' }`）。解決規則は specs/commands/start.md#言語。
+  UI とエージェント（`get_review_context`）に同じ値を見せる。状態ファイルには会話を始めたときのタグだけを保存し、resume 時の変更検知に使う
 
 - `recommendation` はエージェントが `recommend_review` で登録する推奨 verdict と総評。Submit ダイアログはこれを初期値として開く
   （specs/sessions/github.md）。永続化するが、エージェントのセッションと同じく head / merge-base が変わったら捨てる。Submit に成功したら消す

@@ -26,7 +26,7 @@ export function SubmitDialog(props: { onClose: () => void }) {
     return [...m.entries()];
   });
   const needsBody = () => event() !== 'APPROVE' && s().pending.length === 0;
-  const headMismatch = () => s().warnings.find((w) => w.code === 'head-mismatch');
+  const submitWarnings = () => s().warnings.filter((w) => w.code === 'head-mismatch' || w.code === 'review-language');
   const edited = () => {
     const r = rec();
     return !!r && (r.event !== event() || r.body !== body());
@@ -68,7 +68,7 @@ export function SubmitDialog(props: { onClose: () => void }) {
             Finish your review
             <Show when={s().pr}>{(pr) => <span class="muted"> · #{pr().number}</span>}</Show>
           </h2>
-          <Show when={headMismatch()}>{(w) => <div class="warning">⚠️ {w().message}</div>}</Show>
+          <For each={submitWarnings()}>{(w) => <div class="warning">⚠️ {w.message}</div>}</For>
           <Show when={rec()}>
             {(r) => (
               <div class="recommendation">

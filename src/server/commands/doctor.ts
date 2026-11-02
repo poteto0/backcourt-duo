@@ -2,6 +2,8 @@
 import { createServer } from 'node:net';
 import { loadRepoContext, type RepoContext } from './context.js';
 import { resolveAgentAuth, resolveAuthMode } from '../auth/agent.js';
+import { loadLanguage, type LanguageFlags } from '../config.js';
+import { describeLanguage } from '../../shared/language.js';
 import { style } from '../term.js';
 
 export interface DoctorOptions {
@@ -10,6 +12,7 @@ export interface DoctorOptions {
   pr?: number | undefined;
   port: number;
   auth?: string | undefined;
+  language: LanguageFlags;
   json: boolean;
 }
 
@@ -53,6 +56,11 @@ function repoChecks(ctx: RepoContext): Check[] {
   return checks;
 }
 
+function languageChecks(flags: LanguageFlags, root: string | null): Check[] {
+  const { value, warnings } = loadLanguage(flags, root);
+  return [{ name: 'language', level: 'ok', message: describeLanguage(value) }, ...warnings.map((w): Check => ({ name: 'language', level: 'warn', message: w }))];
+}
+
 async function agentChecks(authFlag: string | undefined): Promise<Check[]> {
   try {
     const a = (await resolveAgentAuth(resolveAuthMode(authFlag))).summary;
@@ -68,14 +76,17 @@ async function agentChecks(authFlag: string | undefined): Promise<Check[]> {
 export async function doctorCommand(opts: DoctorOptions): Promise<number> {
   const major = Number(process.versions.node.split('.')[0]);
   // Independent checks run concurrently.
-  const [repo, agent, free] = await Promise.all([
-    loadRepoContext(opts).then(repoChecks, (err: Error): Check[] => [{ name: 'git', level: 'fail', message: err.message }]),
+  const ctx = loadRepoContext(opts);
+  const [repo, language, agent, free] = await Promise.all([
+    ctx.then(repoChecks, (err: Error): Check[] => [{ name: 'git', level: 'fail', message: err.message }]),
+    ctx.then((c) => c.root, () => null).then((root) => languageChecks(opts.language, root)),
     agentChecks(opts.auth),
     portFree(opts.port),
   ]);
   const checks: Check[] = [
     { name: 'node', level: major >= 24 ? 'ok' : 'fail', message: `Node.js ${process.versions.node}${major >= 24 ? '' : ' — need >= 24 (use `nix develop`)'}` },
     ...repo,
+    ...language,
     ...agent,
     { name: 'port', level: free ? 'ok' : 'fail', message: free ? `port ${opts.port} is free` : `port ${opts.port} is in use (--port)` },
   ];
