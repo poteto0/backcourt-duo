@@ -29,6 +29,9 @@ import type {
   Warning,
 } from '../shared/types.js';
 import { commentRef, formatRef } from '../shared/types.js';
+import { describeLanguage, looksLikeOtherLanguage, type LanguageSettings } from '../shared/language.js';
+
+type LanguageTags = { conversation: string | null; review: string | null };
 
 interface Persisted {
   version: 1;
@@ -43,6 +46,8 @@ interface Persisted {
   agentSessionId: string | null;
   lastSubmission: Submission | null;
   recommendation?: ReviewRecommendation | null;
+  /** Language tags the agent conversation was last instructed with. */
+  language?: LanguageTags;
 }
 
 export class StoreError extends Error {}
@@ -76,6 +81,8 @@ export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] 
     readonly target: ReviewTarget,
     readonly diff: DiffFile[],
     private readonly statePath: string | null,
+    /** Fixed at startup (specs/commands/start.md#言語). */
+    readonly language: LanguageSettings = { conversation: null, review: null },
   ) {
     super();
     for (const f of diff) this.diffByPath.set(f.path, f);
@@ -104,6 +111,9 @@ export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] 
     } else if (this.github.auth?.ready) {
       w.push({ code: 'no-pr', message: 'No open pull request found for this branch — Submit is disabled. Create one (gh pr create) or pass --pr <number>.' });
     }
+    const review = this.language.review;
+    const off = review ? this.pending.filter((c) => looksLikeOtherLanguage(c.body, review.tag)) : [];
+    if (review && off.length) w.push({ code: 'review-language', message: `${off.length} pending comment${off.length === 1 ? ' seems' : 's seem'} not to be in ${review.name}, the review language (${off.map((c) => c.id).join(', ')}).` });
     if (this.target.uncommitted) w.push({ code: 'uncommitted', message: 'Including uncommitted changes: comments on those lines cannot be posted.' });
     return w;
   }
@@ -123,6 +133,7 @@ export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] 
       github: this.github,
       lastSubmission: this.lastSubmission,
       recommendation: this.recommendation,
+      language: this.language,
       warnings: this.warnings,
     };
   }
@@ -170,6 +181,12 @@ export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] 
     const sameCode = data.headSha === this.target.headSha && data.mergeBaseSha === this.target.mergeBaseSha;
     this.agentSessionId = sameCode ? data.agentSessionId : null;
     this.recommendation = sameCode ? (data.recommendation ?? null) : null;
+    // A resumed conversation may have been held in other languages: tell the agent once, on its next turn.
+    const was = data.language ?? { conversation: null, review: null };
+    const tags = this.languageTags();
+    if (this.agentSessionId && (was.conversation !== tags.conversation || was.review !== tags.review)) {
+      this.logActivity(`language settings changed since this conversation started (${describeLanguage(this.language)}); follow the Language section of your instructions from now on`);
+    }
     if (!this.agentSessionId && this.chat.length) {
       this.chat.push(this.makeMessage('system', 'The branch changed since the last session; the agent starts a fresh conversation (pending comments were kept where lines still match).'));
     }
@@ -201,12 +218,17 @@ export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] 
       agentSessionId: this.agentSessionId,
       lastSubmission: this.lastSubmission,
       recommendation: this.recommendation,
+      language: this.languageTags(),
     };
     const dir = join(this.statePath, '..');
     await mkdir(dir, { recursive: true });
     const tmp = `${this.statePath}.${process.pid}.tmp`;
     await writeFile(tmp, JSON.stringify(data));
     await rename(tmp, this.statePath);
+  }
+
+  private languageTags(): LanguageTags {
+    return { conversation: this.language.conversation?.tag ?? null, review: this.language.review?.tag ?? null };
   }
 
   async flush(): Promise<void> {

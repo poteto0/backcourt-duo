@@ -14,10 +14,11 @@
 | 6 | GitHub 認証 | トークンが得られる | `backcourt-duo auth login --github` |
 | 7 | PR | 現在のブランチに open な PR がある | `gh pr create` か `--pr` を使う |
 | 8 | push 状態 | PR の head SHA がローカルの HEAD と一致する | `git push` を促す |
-| 9 | エージェント認証 | 選択中のモードで使える | specs/sessions/agent-*.md の案内 |
-| 10 | ポート | 1200（または `--port`）が空いている | `--port` |
+| 9 | 言語 | 常に OK。`chat ja (config) · review en (--review-lang)` のように、解決した言語とどこで決まったかを表示する | 環境変数・リポジトリ設定の不正な値は ⚠ |
+| 10 | エージェント認証 | 選択中のモードで使える | specs/sessions/agent-*.md の案内 |
+| 11 | ポート | 1200（または `--port`）が空いている | `--port` |
 
 出力は `✔` / `⚠` / `✖` と 1 行の説明。`--json` を付けると機械可読な形で出力する。
 ✖ が 1 つでもあれば exit 1、⚠ だけなら exit 0。
 
-オプションは `-C, --cwd`、`--base`、`--pr`、`--port`、`--auth`、`--json`（意味は start と同じ）。
+オプションは `-C, --cwd`、`--base`、`--pr`、`--port`、`--auth`、`--lang`、`--chat-lang`、`--review-lang`、`--json`（意味は start と同じ）。

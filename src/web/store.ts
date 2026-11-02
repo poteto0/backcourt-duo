@@ -2,8 +2,9 @@
 import { batch, createMemo, createRoot, createSignal } from 'solid-js';
 import { createStore, produce, reconcile } from 'solid-js/store';
 import { api, connectEvents } from './api';
-import type { ChatEvent, ChatMessage, Cursor, DiffFile, ReviewStateSnapshot, Side } from '../shared/types';
+import type { ChatEvent, ChatMessage, Cursor, DiffFile, PendingComment, ReviewStateSnapshot, Side } from '../shared/types';
 import { formatRef } from '../shared/types';
+import { looksLikeOtherLanguage } from '../shared/language';
 
 export interface Selection {
   path: string;
@@ -97,6 +98,12 @@ export function openFile(path: string, opts: { line?: number | undefined; endLin
 export function setSelection(sel: Selection | null): void {
   setSelectionRaw(sel);
   pushPresence();
+}
+
+/** A pending comment that seems to be in another language than `language.review` (heuristic, UI hint only). */
+export function inOtherLanguage(c: PendingComment): boolean {
+  const review = state.s?.language.review;
+  return !!review && looksLikeOtherLanguage(c.body, review.tag);
 }
 
 export function insertIntoComposer(text: string): void {

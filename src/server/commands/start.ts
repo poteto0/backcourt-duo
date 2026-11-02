@@ -8,7 +8,8 @@ import { GitError } from '../git.js';
 import { ReviewStore } from '../store.js';
 import { LocalSession, isLoopbackHost } from '../auth/local.js';
 import { resolveAuthMode } from '../auth/agent.js';
-import { resolveModel } from '../config.js';
+import { loadLanguage, resolveModel, type LanguageFlags } from '../config.js';
+import { describeLanguage } from '../../shared/language.js';
 import { AgentSession } from '../agent/session.js';
 import { createApp } from '../http.js';
 import { PACKAGE_ROOT, VERSION } from '../version.js';
@@ -24,6 +25,7 @@ export interface StartOptions {
   host: string;
   auth?: string | undefined;
   model?: string | undefined;
+  language: LanguageFlags;
   open: boolean;
   agent: boolean;
   fresh: boolean;
@@ -62,7 +64,10 @@ export async function startCommand(opts: StartOptions): Promise<number> {
   else console.log(style.yellow('   No open PR for this branch — Submit will be disabled.'));
 
   const statePath = ReviewStore.statePathFor(ctx.gitDir, target.branch, target.headSha);
-  const store = new ReviewStore(target, diff, statePath);
+  const language = loadLanguage(opts.language, ctx.root);
+  const store = new ReviewStore(target, diff, statePath, language.value);
+  for (const w of language.warnings) console.log(style.yellow(`   ${w}`));
+  console.log(`   ${style.dim('lang')}  ${describeLanguage(language.value)}`);
   if (!opts.fresh && (await store.load())) console.log(`   ${style.dim('state')} restored from ${statePath}`);
   store.pr = ctx.pr;
   store.github = { auth: ctx.github?.summary ?? null, owner: ctx.remote?.owner ?? null, repo: ctx.remote?.repo ?? null };

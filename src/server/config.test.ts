@@ -44,7 +44,7 @@ test('loadConfig: missing → empty, broken or invalid → ignored, unknown keys
   assert.deepEqual(loadConfig(p).value, {});
   assert.equal(loadConfig(p).warnings.length, 1);
   await writeFile(p, JSON.stringify({ privacy: { account: 'mask' }, language: 'ja' }));
-  assert.deepEqual(loadConfig(p), { value: { privacy: { account: 'mask' }, language: 'ja' }, warnings: [] });
+  assert.deepEqual(loadConfig(p), { value: { privacy: { account: 'mask' }, language: { conversation: 'ja', review: 'ja' } }, warnings: [] });
 });
 
 test('resolveAgentAuth (claude-code) never puts the raw email in the summary unless show', async () => {
