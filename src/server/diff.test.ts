@@ -79,10 +79,44 @@ test('commentable lines follow GitHub rules', () => {
   assert.equal(isCommentableRange(a, 'RIGHT', 2, 40), false);
 });
 
-test('agent rendering annotates L/R numbers', () => {
-  const text = renderFileDiffForAgent(parseUnifiedDiff(SAMPLE)[0]!);
-  assert.match(text, /L {3}2 R {4} \|-\| const y = 2;/);
-  assert.match(text, /L {4} R {3}3 \|\+\| const z = 4;/);
+test('agent rendering puts one line number in the gutter', () => {
+  const lines = renderFileDiffForAgent(parseUnifiedDiff(SAMPLE)[0]!).split('\n');
+  assert.deepEqual(lines.slice(2), [
+    '@@ -1,4 +1,5 @@ export function a() {',
+    'R1  const x = 1;',
+    'L2 -const y = 2;',
+    'R2 +const y = 3;',
+    'R3 +const z = 4;',
+    'R4  ',
+    'R5  export {};',
+  ]);
+});
+
+/** A diff with `hunks` hunks of `size` added lines each. */
+function bigDiff(hunks: number, size: number): string {
+  let text = 'diff --git a/big.ts b/big.ts\n--- a/big.ts\n+++ b/big.ts\n';
+  for (let h = 0; h < hunks; h++) {
+    const start = h * 1000 + 1;
+    text += `@@ -${start},0 +${start},${size} @@\n`;
+    for (let i = 0; i < size; i++) text += `+line ${h}.${i}\n`;
+  }
+  return text;
+}
+
+test('agent rendering pages long diffs by diff line, across and inside hunks', () => {
+  const file = parseUnifiedDiff(bigDiff(2, 400))[0]!;
+  const first = renderFileDiffForAgent(file);
+  assert.match(first, /R1200 \+line 1\.199\n… truncated: 200 more lines\. Call get_file_diff with offset=600 to continue\.$/);
+
+  const rest = renderFileDiffForAgent(file, { offset: 600 }).split('\n');
+  assert.deepEqual(rest.slice(1, 4), ['# from diff line 600', '@@ -1001,0 +1001,400 @@', 'R1201 +line 1.200']);
+  assert.equal(rest.at(-1), 'R1400 +line 1.399');
+});
+
+test('agent rendering clips very long lines', () => {
+  const file = parseUnifiedDiff(`diff --git a/m.js b/m.js\n--- a/m.js\n+++ b/m.js\n@@ -0,0 +1 @@\n+${'x'.repeat(1000)}\n`)[0]!;
+  const line = renderFileDiffForAgent(file).split('\n').at(-1)!;
+  assert.equal(line, `R1 +${'x'.repeat(300)}… [+700 chars]`);
 });
 
 test('parses remotes', () => {

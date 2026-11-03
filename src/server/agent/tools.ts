@@ -49,11 +49,15 @@ export function createDuoTools(store: ReviewStore, notify: (text: string) => voi
       }),
     ),
 
-    tool('get_file_diff', 'Diff of one changed file, every line annotated with old (L) and new (R) line numbers. Only these lines can receive comments.', { path: z.string() }, async ({ path }) =>
-      guard(() => {
-        store.requireFile(path);
-        return ok(renderFileDiffForAgent(store.diffByPath.get(path)!));
-      }),
+    tool(
+      'get_file_diff',
+      "Diff of one changed file. Added/context lines carry the new line number (R), deleted lines the old one (L). Only these lines can receive comments. Long diffs are paged: pass the offset from the truncation note to continue.",
+      { path: z.string(), offset: z.number().int().min(0).optional().describe('diff lines to skip (default 0)') },
+      async ({ path, offset }) =>
+        guard(() => {
+          store.requireFile(path);
+          return ok(renderFileDiffForAgent(store.diffByPath.get(path)!, { offset }));
+        }),
     ),
 
     tool(
