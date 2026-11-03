@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { ModelUsage, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
-import { compact, TokenMeter, toolResultChars } from './agent/usage.js';
+import { compact, mergeRateLimit, TokenMeter, toolResultChars } from './agent/usage.js';
 
 const usage = (u: Partial<ModelUsage>): ModelUsage => ({
   inputTokens: 0,
@@ -50,4 +50,20 @@ test('TokenMeter: first turn as-is, later turns are the difference; tools reset 
     haiku: usage({ inputTokens: 500, outputTokens: 50, costUSD: 0.001 }),
   };
   assert.equal(meter.observe(result(second)), '[tokens] turn=2 in=1.5k cache_read=20k cache_write=500 out=350 thinking=100 cost=$0.011');
+});
+
+test('mergeRateLimit: one window per kind, newest wins, resetsAt in ms', () => {
+  let w = mergeRateLimit([], { status: 'allowed', rateLimitType: 'five_hour', utilization: 0.3, resetsAt: 1_800_000_000 });
+  w = mergeRateLimit(w, { status: 'allowed', rateLimitType: 'seven_day', utilization: 0.1 });
+  w = mergeRateLimit(w, { status: 'allowed_warning', rateLimitType: 'five_hour', utilization: 0.85, resetsAt: 1_800_000_000 });
+  assert.deepEqual(w, [
+    { kind: 'five_hour', status: 'allowed_warning', utilization: 0.85, resetsAt: 1_800_000_000_000 },
+    { kind: 'seven_day', status: 'allowed', utilization: 0.1, resetsAt: undefined },
+  ]);
+});
+
+test('mergeRateLimit: same array back when nothing changed or utilization is missing', () => {
+  const w = mergeRateLimit([], { status: 'allowed', rateLimitType: 'five_hour', utilization: 0.3, resetsAt: 1_800_000_000 });
+  assert.equal(mergeRateLimit(w, { status: 'allowed', rateLimitType: 'five_hour', utilization: 0.3, resetsAt: 1_800_000_000 }), w);
+  assert.equal(mergeRateLimit(w, { status: 'allowed_warning', rateLimitType: 'seven_day' }), w);
 });

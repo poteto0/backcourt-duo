@@ -176,6 +176,28 @@ export interface AgentInfo {
   /** Reasoning effort for the next turns; unset = the model's default. */
   effort?: EffortLevel | undefined;
   loginInProgress: boolean;
+  /** What the agent has used / has left, refreshed every turn (specs/sessions/agent-session.md#残量の表示). */
+  usage: AgentUsage;
+}
+
+export interface AgentUsage {
+  /** Context window fill after the last turn. */
+  context?: { used: number; max: number } | undefined;
+  /** Plan rate-limit windows (Claude subscription only), one per window kind, in arrival order. */
+  limits: RateLimitWindow[];
+  /** Total cost of this agent session so far (USD); API-key auth only (a subscription is not billed per call). */
+  costUSD?: number | undefined;
+}
+
+/** One plan rate-limit window, from the SDK's `rate_limit_event`. */
+export interface RateLimitWindow {
+  /** `five_hour`, `seven_day`, `seven_day_opus`, … (the SDK's `rateLimitType`). */
+  kind: string;
+  status: 'allowed' | 'allowed_warning' | 'rejected';
+  /** Fraction of the window used, 0–1 (can run past 1). */
+  utilization: number;
+  /** When the window resets, epoch ms. */
+  resetsAt?: number | undefined;
 }
 
 /** How hard the agent thinks (the SDK's `effort` / `/effort`). */

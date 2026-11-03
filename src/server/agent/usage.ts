@@ -1,7 +1,26 @@
-// Per-turn token accounting for BACKCOURT_DUO_DEBUG (specs/sessions/agent-session.md#トークン計測デバッグ用).
-// Debug-only: the line goes to stderr, never to the chat, SSE or the state file.
-import type { ModelUsage, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+// Usage accounting: the per-turn token log for BACKCOURT_DUO_DEBUG (specs/sessions/agent-session.md#トークン計測デバッグ用),
+// which goes to stderr only, and the rate-limit window merge behind the UI's usage meter (#残量の表示).
+import type { ModelUsage, SDKMessage, SDKRateLimitInfo } from '@anthropic-ai/claude-agent-sdk';
+import type { RateLimitWindow } from '../../shared/types.js';
 import { shortToolName } from './tools.js';
+
+/**
+ * Replace (or append) the window a `rate_limit_event` reports; the SDK sends one window per event.
+ * Returns `windows` itself when the event has no utilization or repeats the stored values, so callers can skip the update.
+ */
+export function mergeRateLimit(windows: RateLimitWindow[], info: SDKRateLimitInfo): RateLimitWindow[] {
+  if (info.utilization === undefined) return windows;
+  const next: RateLimitWindow = {
+    kind: info.rateLimitType ?? 'limit',
+    status: info.status,
+    utilization: info.utilization,
+    resetsAt: info.resetsAt === undefined ? undefined : info.resetsAt * 1000,
+  };
+  const i = windows.findIndex((w) => w.kind === next.kind);
+  const cur = windows[i];
+  if (cur && cur.status === next.status && cur.utilization === next.utilization && cur.resetsAt === next.resetsAt) return windows;
+  return i < 0 ? [...windows, next] : windows.with(i, next);
+}
 
 /** Log label → summed ModelUsage field, in output order (`thinking` is left out when 0). */
 const FIELDS = [

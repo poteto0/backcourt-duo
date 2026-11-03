@@ -5,8 +5,8 @@ import { isSignInError, looksLikeAuthError, resolveAgentAuth, type ResolvedAgent
 import { startClaudeLogin } from '../auth/claude-login.js';
 import { createDuoServer, createDuoTools, DUO_SERVER, shortToolName } from './tools.js';
 import { kickoffPrompt, reviewSystemPrompt, wrapHumanMessage } from './prompts.js';
-import { TokenMeter } from './usage.js';
-import type { AgentAuthMode, AgentStatus, ChatMessage, EffortLevel, ModelOption, Ref } from '../../shared/types.js';
+import { mergeRateLimit, TokenMeter } from './usage.js';
+import type { AgentAuthMode, AgentStatus, AgentUsage, ChatMessage, EffortLevel, ModelOption, Ref } from '../../shared/types.js';
 import { formatRef } from '../../shared/types.js';
 
 const READ_ONLY_TOOLS = ['Read', 'Grep', 'Glob'];
@@ -79,7 +79,8 @@ export class AgentSession {
     this.store.setAgentStatus('starting');
     const auth = resolved ?? (await resolveAgentAuth(this.opts.authMode));
     if (gen !== this.generation) return;
-    this.store.setAgent({ auth: auth.summary });
+    // Context and cost belong to one query(); plan limits belong to the account and stay.
+    this.store.setAgent({ auth: auth.summary, usage: { limits: this.store.agent.usage.limits } });
     for (const w of auth.summary.warnings) this.system(`⚠️ ${w}`);
     if (!auth.summary.ready) {
       this.store.setAgentStatus(this.opts.authMode === 'claude-code' ? 'signed-out' : 'error', auth.summary.hint ?? 'agent is not authenticated');
@@ -246,6 +247,24 @@ export class AgentSession {
     }
   }
 
+  private setUsage(patch: Partial<AgentUsage>): void {
+    this.store.setAgent({ usage: { ...this.store.agent.usage, ...patch } });
+  }
+
+  /**
+   * End-of-turn usage meter update, as one store change: the context fill (`summary` answers from the last response
+   * without extra token-count calls) and, with an API key, the session cost.
+   */
+  private async refreshUsage(totalCostUSD: number): Promise<void> {
+    const gen = this.generation;
+    const c = await this.q?.getContextUsage({ detail: 'summary' }).catch(() => undefined);
+    if (gen !== this.generation) return;
+    this.setUsage({
+      ...(c ? { context: { used: c.totalTokens, max: c.maxTokens } } : {}),
+      ...(this.opts.authMode === 'api-key' ? { costUSD: totalCostUSD } : {}),
+    });
+  }
+
   private endTurn(): void {
     for (const id of this.blockMsg.values()) this.store.updateChat(id, { streaming: false });
     this.blockMsg.clear();
@@ -309,8 +328,15 @@ export class AgentSession {
         }
         return;
       }
+      case 'rate_limit_event': {
+        const limits = this.store.agent.usage.limits;
+        const next = mergeRateLimit(limits, m.rate_limit_info);
+        if (next !== limits) this.setUsage({ limits: next });
+        return;
+      }
       case 'result': {
         this.endTurn();
+        void this.refreshUsage(m.total_cost_usd);
         if (m.subtype === 'success' && !m.is_error) {
           this.store.setAgentStatus('waiting');
           return;

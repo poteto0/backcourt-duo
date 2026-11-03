@@ -65,7 +65,7 @@ export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] 
   followAgent = true;
   pending: PendingComment[] = [];
   proposals: ChangeProposal[] = [];
-  agent: AgentInfo = { status: 'starting', auth: null, loginInProgress: false };
+  agent: AgentInfo = { status: 'starting', auth: null, loginInProgress: false, usage: { limits: [] } };
   github: GitHubContext = { auth: null, owner: null, repo: null };
   lastSubmission: Submission | null = null;
   recommendation: ReviewRecommendation | null = null;
