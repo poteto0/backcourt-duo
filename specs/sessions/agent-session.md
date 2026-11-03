@@ -75,7 +75,7 @@ stopped（サーバー終了時）
 | tool | 入力 | 効果 |
 |---|---|---|
 | `get_review_context` | — | target、PR（タイトルと本文）、ファイル一覧（統計、reviewState、プランのメモ）、pending、変更案、presence、phase、`language` |
-| `get_file_diff` | `{ path }` | そのファイルの diff を、各行に `L<old> R<new>` を付けたテキストで返す。コメントできる行かどうかもこれで判断できる |
+| `get_file_diff` | `{ path, offset? }` | そのファイルの diff をテキストで返す。追加行と文脈行には新しい行番号 `R<new>`、削除行には古い行番号 `L<old>` を付ける。コメントできる行かどうかもこれで判断できる。1 回で返すのは diff 600 行までで、切り詰めたときは末尾に続きの `offset`（読み飛ばす diff 行数）を示す。1 行は 300 文字で切る |
 | `set_review_plan` | `{ summary, files: [{ path, priority: 'high'\|'medium'\|'low', note }] }` | プランを登録し、phase を `walkthrough` にする |
 | `focus` | `{ path, startLine?, endLine?, side?, note? }` | エージェントのカーソルを動かし、そのファイルを `in-progress` にする |
 | `get_human_focus` | — | 人間のカーソル |

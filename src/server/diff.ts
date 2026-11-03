@@ -148,28 +148,35 @@ export function rightLineTexts(file: DiffFile, start: number, end: number): stri
   return file.hunks.flatMap((h) => h.lines.filter((l) => l.newLine !== undefined && l.newLine >= start && l.newLine <= end).map((l) => l.text));
 }
 
-/** Compact text rendering for the agent: every line annotated with old/new numbers. */
-export function renderFileDiffForAgent(file: DiffFile, maxLines = 1500): string {
-  const out: string[] = [];
-  out.push(`# ${file.path} (${file.status}${file.oldPath ? ` from ${file.oldPath}` : ''}, +${file.additions} -${file.deletions})`);
+const MAX_LINE_CHARS = 300;
+
+const clip = (text: string) =>
+  text.length > MAX_LINE_CHARS ? `${text.slice(0, MAX_LINE_CHARS)}… [+${text.length - MAX_LINE_CHARS} chars]` : text;
+
+/**
+ * Compact text rendering for the agent. Each line carries one number: `L<old>` on deleted lines,
+ * `R<new>` on added and context lines. Paged by diff line: at most `maxLines` lines after skipping `offset`.
+ */
+export function renderFileDiffForAgent(file: DiffFile, { offset = 0, maxLines = 600 }: { offset?: number | undefined; maxLines?: number } = {}): string {
+  const out = [`# ${file.path} (${file.status}${file.oldPath ? ` from ${file.oldPath}` : ''}, +${file.additions} -${file.deletions})`];
   if (file.binary) {
     out.push('(binary file — no textual diff)');
     return out.join('\n');
   }
-  out.push('# columns: L<old line> R<new line> | marker | text. Comment on RIGHT lines with the R number, on deleted lines with side LEFT and the L number.');
-  let count = 0;
+  out.push(offset > 0 ? `# from diff line ${offset}` : "# R=new line, L=old line (comment with R; L only on '-' lines)");
+  const end = offset + maxLines;
+  let pos = 0;
   for (const h of file.hunks) {
-    out.push(h.header);
-    for (const l of h.lines) {
-      if (count++ >= maxLines) {
-        out.push(`… truncated (${file.additions + file.deletions} changed lines total). Use Read on the file for full context.`);
-        return out.join('\n');
+    const from = Math.max(offset - pos, 0);
+    const to = Math.min(end - pos, h.lines.length);
+    if (from < to) {
+      out.push(h.header);
+      for (const l of h.lines.slice(from, to)) {
+        out.push(l.kind === 'del' ? `L${l.oldLine} -${clip(l.text)}` : `R${l.newLine} ${l.kind === 'add' ? '+' : ' '}${clip(l.text)}`);
       }
-      const L = l.oldLine === undefined ? '    ' : String(l.oldLine).padStart(4);
-      const R = l.newLine === undefined ? '    ' : String(l.newLine).padStart(4);
-      const mark = l.kind === 'add' ? '+' : l.kind === 'del' ? '-' : ' ';
-      out.push(`L${L} R${R} |${mark}| ${l.text}`);
     }
+    pos += h.lines.length;
   }
+  if (pos > end) out.push(`… truncated: ${pos - end} more lines. Call get_file_diff with offset=${end} to continue.`);
   return out.join('\n');
 }
