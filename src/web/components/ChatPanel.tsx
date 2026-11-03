@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createSignal, For, Match, on, onCleanup, Show, Switch } from 'solid-js';
-import type { ChatMessage, EffortLevel } from '../../shared/types';
+import type { AgentUsage, ChatMessage, EffortLevel } from '../../shared/types';
 import { api, ApiError } from '../api';
 import { renderMarkdown } from '../markdown';
 import { chat, composerInsert, hereRef, openFile, snap } from '../store';
@@ -98,6 +98,8 @@ export function ChatPanel() {
           {STATUS_LABEL[status()] ?? status()}
         </span>
       </div>
+
+      <UsageMeter usage={s().agent.usage} />
 
       <Show when={s().warnings.length}>
         <div class="warnings">
@@ -247,6 +249,62 @@ function EffortPicker(props: { onError: (message: string) => void }) {
         onError={props.onError}
       />
     </Show>
+  );
+}
+
+const LIMIT_LABEL: Record<string, string> = {
+  five_hour: '5h',
+  seven_day: '7d',
+  seven_day_opus: '7d Opus',
+  seven_day_sonnet: '7d Sonnet',
+  seven_day_overage_included: '7d',
+  overage: 'extra',
+};
+/** Below this share left, a meter turns to the warning colour. */
+const LOW_LEFT = 0.2;
+
+/** Share as a whole percent, clamped to 0–100%. */
+const pct = (fraction: number) => `${Math.round(Math.min(1, Math.max(0, fraction)) * 100)}%`;
+
+function resetLabel(at: number): string {
+  const d = new Date(at);
+  const sameDay = d.toDateString() === new Date().toDateString();
+  return sameDay ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : d.toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+/** What the agent has left: context window, plan limits (subscription) and cost (API key). Always on once known. */
+function UsageMeter(props: { usage: AgentUsage }) {
+  // A window whose reset time has passed says nothing about now.
+  const limits = () => props.usage.limits.filter((w) => w.resetsAt === undefined || w.resetsAt > Date.now());
+  return (
+    <Show when={props.usage.context || limits().length || props.usage.costUSD !== undefined}>
+      <div class="usage">
+        <Show when={props.usage.context}>
+          {(c) => <Meter label="context" left={1 - c().used / c().max} title={`Context window: ${c().used.toLocaleString()} / ${c().max.toLocaleString()} tokens used`} />}
+        </Show>
+        <For each={limits()}>
+          {(w) => (
+            <Meter
+              label={LIMIT_LABEL[w.kind] ?? w.kind}
+              left={w.status === 'rejected' ? 0 : 1 - w.utilization}
+              title={`Plan limit (${w.kind}): ${pct(w.utilization)} used`}
+              suffix={w.resetsAt === undefined ? '' : ` · resets ${resetLabel(w.resetsAt)}`}
+            />
+          )}
+        </For>
+        <Show when={props.usage.costUSD !== undefined}>
+          <span class="meter" title="Cost of this agent session so far">${props.usage.costUSD!.toFixed(2)}</span>
+        </Show>
+      </div>
+    </Show>
+  );
+}
+
+function Meter(props: { label: string; left: number; title: string; suffix?: string }) {
+  return (
+    <span classList={{ meter: true, low: props.left < LOW_LEFT }} title={props.title}>
+      {props.label} <span class="bar"><span class="fill" style={{ width: pct(props.left) }} /></span> {pct(props.left)} left{props.suffix ?? ''}
+    </span>
   );
 }
 

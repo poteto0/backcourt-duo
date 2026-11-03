@@ -36,6 +36,23 @@ stopped（サーバー終了時）
 - 切り替えた effort はモデルと同じく restart や再サインインのあとも使う（サーバーを再起動すると `--effort` / 環境変数 / 設定ファイルの値に戻る）
 - モデルが対応しない段階（例: `max` 非対応のモデル）は SDK 側で丸められる。`agent.effort` は選んだ値のまま表示する
 
+## 残量の表示
+
+エージェントがあとどれくらい使えるかを、チャットペインのヘッダー直下に常に表示する（`agent.usage`、SSE で配信。状態ファイルには保存しない）。
+
+| 項目 | 出どころ | 更新タイミング |
+|---|---|---|
+| `context`（`used` / `max` トークン） | `query.getContextUsage({ detail: 'summary' })` の `totalTokens` / `maxTokens` | `result` を受け取るたび |
+| `limits`（プラン上限の窓ごとの `utilization`（0–1）・`resetsAt`（epoch ms）・`status`） | `rate_limit_event` の `rate_limit_info`。1 イベント 1 窓なので `rateLimitType` ごとに最新値で置き換える。`utilization` のないイベントと、値が変わらないイベントは無視する（SSE を流さない） | イベントを受け取るたび（サブスクのみ。API キーでは来ない） |
+| `costUSD` | `result.total_cost_usd`（`query()` ごとの累積）。API キーのときだけ入れる（サブスクでは請求額ではないため） | `result` を受け取るたび |
+
+- `result` のあとの `context` と `costUSD` は 1 回の store 更新にまとめる
+- `context` と `costUSD` は `query()` ごとの値なので、`query()` を張り直す（restart・再サインイン）ときに消す。`limits` はアカウントの値なので残す
+- UI は「残り」で見せる: context は `1 - used/max`、各窓は `1 - utilization`（`status: 'rejected'` は 0%）。残りが 20% を切ると警告色にする
+- 窓のリセット時刻を表示し、リセット時刻を過ぎた窓は今の値ではないので出さない
+- 何もわかっていないあいだ（最初のターンが終わるまで）はメーター自体を出さない
+- 実験的 API（`usage_EXPERIMENTAL_…`）は使わない
+
 ## トークン計測（デバッグ用）
 
 `BACKCOURT_DUO_DEBUG` が設定されているとき、`result` を受け取るたびに stderr へ 1 ターン 1 行で消費量を出す（削減の優先順位づけと効果測定のため）。
