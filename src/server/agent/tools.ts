@@ -1,7 +1,7 @@
 // MCP tools exposed to the agent (server name "duo") — specs/sessions/agent-session.md
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
-import { renderFileDiffForAgent } from '../diff.js';
+import { renderFileDiffForAgent, skippedKind } from '../diff.js';
 import { StoreError, type ReviewStore } from '../store.js';
 import { AgentPhaseSchema, cursorShape, pendingShape, PrioritySchema, ReviewEventSchema } from '../schemas.js';
 
@@ -26,7 +26,7 @@ export const shortToolName = (name: string) => name.replace(`mcp__${DUO_SERVER}_
 
 export function createDuoTools(store: ReviewStore, notify: (text: string) => void) {
   return [
-    tool('get_review_context', 'Overview of the review: target refs, PR title/body, changed files (stats, review state, plan notes), pending comments, presence, phase, and the chat / review languages.', {}, async () =>
+    tool('get_review_context', 'Overview of the review: target refs, PR title/body, changed files (stats, review state, plan notes; skipped = lockfile/generated, summarized by get_file_diff), pending comments, presence, phase, and the chat / review languages.', {}, async () =>
       guard(() => {
         const notes = new Map(store.plan?.files.map((p) => [p.path, p]) ?? []);
         const { target, pr } = store;
@@ -37,7 +37,7 @@ export function createDuoTools(store: ReviewStore, notify: (text: string) => voi
           plan: store.plan && { summary: store.plan.summary },
           files: store.files.map((f) => {
             const note = notes.get(f.path);
-            return { path: f.path, oldPath: f.oldPath, status: f.status, additions: f.additions, deletions: f.deletions, binary: f.binary, reviewState: f.reviewState, priority: note?.priority, note: note?.note };
+            return { path: f.path, oldPath: f.oldPath, status: f.status, additions: f.additions, deletions: f.deletions, binary: f.binary, skipped: skippedKind(f.path), reviewState: f.reviewState, priority: note?.priority, note: note?.note };
           }),
           pending: store.pending.map(({ id, path, side, line, startLine, author, body }) => ({ id, path, side, line, startLine, author, body })),
           proposals: store.proposals.map(({ id, path, startLine, endLine, note }) => ({ id, path, startLine, endLine, note })),
@@ -51,12 +51,16 @@ export function createDuoTools(store: ReviewStore, notify: (text: string) => voi
 
     tool(
       'get_file_diff',
-      "Diff of one changed file. Added/context lines carry the new line number (R), deleted lines the old one (L). Only these lines can receive comments. Long diffs are paged: pass the offset from the truncation note to continue.",
-      { path: z.string(), offset: z.number().int().min(0).optional().describe('diff lines to skip (default 0)') },
-      async ({ path, offset }) =>
+      "Diff of one changed file. Added/context lines carry the new line number (R), deleted lines the old one (L). Only these lines can receive comments. Long diffs are paged: pass the offset from the truncation note to continue. Lockfiles and generated files (dist/, *.min.js, *.snap, …) return a one-line summary unless force is true.",
+      {
+        path: z.string(),
+        offset: z.number().int().min(0).optional().describe('diff lines to skip (default 0)'),
+        force: z.boolean().optional().describe('read a lockfile / generated file diff anyway'),
+      },
+      async ({ path, offset, force }) =>
         guard(() => {
           store.requireFile(path);
-          return ok(renderFileDiffForAgent(store.diffByPath.get(path)!, { offset }));
+          return ok(renderFileDiffForAgent(store.diffByPath.get(path)!, { offset, force }));
         }),
     ),
 
