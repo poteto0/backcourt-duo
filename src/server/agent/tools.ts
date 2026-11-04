@@ -7,7 +7,7 @@ import { AgentPhaseSchema, cursorShape, pendingShape, PrioritySchema, ReviewEven
 
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
 
-const ok = (value: unknown): ToolResult => ({ content: [{ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value, null, 2) }] });
+const ok = (value: unknown): ToolResult => ({ content: [{ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value) }] });
 const fail = (message: string): ToolResult => ({ content: [{ type: 'text', text: message }], isError: true });
 
 async function guard(fn: () => ToolResult | Promise<ToolResult>): Promise<ToolResult> {
