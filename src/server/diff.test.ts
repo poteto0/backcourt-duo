@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isCommentable, isCommentableRange, parseUnifiedDiff, renderFileDiffForAgent } from './diff.js';
+import { isCommentable, isCommentableRange, parseUnifiedDiff, renderFileDiffForAgent, skippedKind } from './diff.js';
 import { parseRemoteUrl } from './git.js';
 import { buildReviewPayload, AGENT_FOOTER } from './github.js';
 import { parseRefs, formatRef } from '../shared/types.js';
@@ -117,6 +117,24 @@ test('agent rendering clips very long lines', () => {
   const file = parseUnifiedDiff(`diff --git a/m.js b/m.js\n--- a/m.js\n+++ b/m.js\n@@ -0,0 +1 @@\n+${'x'.repeat(1000)}\n`)[0]!;
   const line = renderFileDiffForAgent(file).split('\n').at(-1)!;
   assert.equal(line, `R1 +${'x'.repeat(300)}… [+700 chars]`);
+});
+
+test('classifies lockfiles and generated files', () => {
+  assert.equal(skippedKind('pnpm-lock.yaml'), 'lockfile');
+  assert.equal(skippedKind('crates/x/Cargo.lock'), 'lockfile');
+  for (const p of ['dist/server/cli.js', 'packages/a/build/x.js', 'vendor/lib.go', 'app.min.js', 'a.min.css', 'a.js.map', 'src/__snapshots__/a.test.ts.snap']) {
+    assert.equal(skippedKind(p), 'generated', p);
+  }
+  for (const p of ['src/server/diff.ts', 'distill.ts', 'src/build.ts', 'map.ts']) assert.equal(skippedKind(p), undefined, p);
+});
+
+test('agent rendering skips lockfiles unless forced', () => {
+  const file = parseUnifiedDiff(bigDiff(2, 700).replaceAll('big.ts', 'pnpm-lock.yaml'))[0]!;
+  assert.equal(
+    renderFileDiffForAgent(file),
+    '# pnpm-lock.yaml (modified, +1400 -0)\n(skipped: lockfile — 1,400 changed lines. Pass force: true to read it.)',
+  );
+  assert.match(renderFileDiffForAgent(file, { force: true }), /R1 \+line 0\.0\n/);
 });
 
 test('parses remotes', () => {

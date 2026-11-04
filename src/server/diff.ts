@@ -148,6 +148,19 @@ export function rightLineTexts(file: DiffFile, start: number, end: number): stri
   return file.hunks.flatMap((h) => h.lines.filter((l) => l.newLine !== undefined && l.newLine >= start && l.newLine <= end).map((l) => l.text));
 }
 
+const LOCKFILES = new Set(['pnpm-lock.yaml', 'package-lock.json', 'yarn.lock', 'Cargo.lock', 'go.sum', 'poetry.lock', 'Gemfile.lock']);
+const GENERATED_DIRS = new Set(['dist', 'build', 'vendor']);
+const GENERATED_SUFFIXES = ['.min.js', '.min.css', '.map', '.snap'];
+
+/** Files whose diff is rarely worth the agent's tokens: lockfiles and build output / vendored / snapshot files. */
+export function skippedKind(path: string): 'lockfile' | 'generated' | undefined {
+  const segments = path.split('/');
+  const name = segments.at(-1)!;
+  if (LOCKFILES.has(name)) return 'lockfile';
+  if (segments.slice(0, -1).some((s) => GENERATED_DIRS.has(s)) || GENERATED_SUFFIXES.some((s) => name.endsWith(s))) return 'generated';
+  return undefined;
+}
+
 const MAX_LINE_CHARS = 300;
 
 const clip = (text: string) =>
@@ -156,13 +169,18 @@ const clip = (text: string) =>
 /**
  * Compact text rendering for the agent. Each line carries one number: `L<old>` on deleted lines,
  * `R<new>` on added and context lines. Paged by diff line: at most `maxLines` lines after skipping `offset`.
+ * Lockfiles and generated files (skippedKind) collapse to a one-line note unless `force` is set.
  */
-export function renderFileDiffForAgent(file: DiffFile, { offset = 0, maxLines = 600 }: { offset?: number | undefined; maxLines?: number } = {}): string {
+export function renderFileDiffForAgent(
+  file: DiffFile,
+  { offset = 0, maxLines = 600, force = false }: { offset?: number | undefined; maxLines?: number; force?: boolean | undefined } = {},
+): string {
   const out = [`# ${file.path} (${file.status}${file.oldPath ? ` from ${file.oldPath}` : ''}, +${file.additions} -${file.deletions})`];
-  if (file.binary) {
-    out.push('(binary file — no textual diff)');
-    return out.join('\n');
-  }
+  const kind = force ? undefined : skippedKind(file.path);
+  const note = file.binary
+    ? '(binary file — no textual diff)'
+    : kind && `(skipped: ${kind} — ${(file.additions + file.deletions).toLocaleString('en-US')} changed lines. Pass force: true to read it.)`;
+  if (note) return [...out, note].join('\n');
   out.push(offset > 0 ? `# from diff line ${offset}` : "# R=new line, L=old line (comment with R; L only on '-' lines)");
   const end = offset + maxLines;
   let pos = 0;
