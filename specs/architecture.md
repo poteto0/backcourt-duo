@@ -40,7 +40,7 @@ interface ReviewState {
   - 作成時に「diff のハンク内にある行か」を検証する（GitHub はハンク外の行へのコメントを拒否するため）
 
 - `LanguageSetting = { tag, name, source }`（例: `{ tag: 'ja', name: 'Japanese', source: 'config' }`）。解決規則は specs/commands/start.md#言語。
-  UI とエージェント（`get_review_context`）に同じ値を見せる。状態ファイルには会話を始めたときのタグだけを保存し、resume 時の変更検知に使う
+  UI とエージェント（システムプロンプトと `get_review_context` の `detail: 'full'`）に同じ値を見せる。状態ファイルには会話を始めたときのタグだけを保存し、resume 時の変更検知に使う
 
 - `recommendation` はエージェントが `recommend_review` で登録する推奨 verdict と総評。Submit ダイアログはこれを初期値として開く
   （specs/sessions/github.md）。永続化するが、エージェントのセッションと同じく head / merge-base が変わったら捨てる。Submit に成功したら消す

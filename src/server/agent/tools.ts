@@ -21,32 +21,54 @@ async function guard(fn: () => ToolResult | Promise<ToolResult>): Promise<ToolRe
 
 export const DUO_SERVER = 'duo';
 
+const LEAN_PR_BODY = 1500;
+const FULL_PR_BODY = 6000;
+
+/** Recursively drops null / undefined / false / '' / [] / {} so results carry no filler. */
+function prune(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(prune);
+  if (value === null || typeof value !== 'object') return value;
+  const entries = Object.entries(value)
+    .map(([k, v]) => [k, prune(v)] as const)
+    .filter(([, v]) => v != null && v !== false && v !== '' && !(Array.isArray(v) && v.length === 0) && !(typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length === 0));
+  return Object.fromEntries(entries);
+}
+
+const reviewContextShape = {
+  detail: z.enum(['lean', 'full']).optional().describe('default lean'),
+  includeBodies: z.boolean().optional().describe('include pending comment and recommendation bodies in lean mode'),
+};
+
+/** Result of get_review_context (specs/sessions/agent-session.md#MCP ツール). */
+export function reviewContext(store: ReviewStore, { detail = 'lean', includeBodies = false }: z.infer<z.ZodObject<typeof reviewContextShape>> = {}) {
+  const full = detail === 'full';
+  const bodies = full || includeBodies;
+  const { target, pr, plan, recommendation } = store;
+  return prune({
+    target: { base: target.base, head: target.head, branch: target.branch, mergeBase: target.mergeBaseSha.slice(0, 12), headSha: target.headSha.slice(0, 12) },
+    pr: pr && { number: pr.number, title: pr.title, body: pr.body.slice(0, full ? FULL_PR_BODY : LEAN_PR_BODY), author: pr.author, baseRef: pr.baseRef, draft: pr.draft },
+    phase: store.phase,
+    plan: plan && { summary: plan.summary, files: plan.files },
+    files: store.files.map((f) => ({ path: f.path, oldPath: f.oldPath, status: f.status, additions: f.additions, deletions: f.deletions, binary: f.binary, skipped: skippedKind(f.path), reviewState: f.reviewState })),
+    pending: store.pending.map(({ id, path, side, line, startLine, author, body }) => ({ id, path, side, line, startLine, author, body: bodies && body })),
+    proposals: store.proposals.map(({ id, path, startLine, endLine, note }) => ({ id, path, startLine, endLine, note })),
+    recommendation: recommendation && { event: recommendation.event, body: bodies && recommendation.body },
+    language: full && store.language,
+    presence: store.presence,
+    warnings: store.warnings.map((w) => w.message),
+  }) as Record<string, unknown>;
+}
+
 /** `mcp__duo__focus` → `focus`; built-in tools pass through. */
 export const shortToolName = (name: string) => name.replace(`mcp__${DUO_SERVER}__`, '');
 
 export function createDuoTools(store: ReviewStore, notify: (text: string) => void) {
   return [
-    tool('get_review_context', 'Overview of the review: target refs, PR title/body, changed files (stats, review state, plan notes; skipped = lockfile/generated, summarized by get_file_diff), pending comments, presence, phase, and the chat / review languages.', {}, async () =>
-      guard(() => {
-        const notes = new Map(store.plan?.files.map((p) => [p.path, p]) ?? []);
-        const { target, pr } = store;
-        return ok({
-          target: { base: target.base, head: target.head, branch: target.branch, mergeBase: target.mergeBaseSha.slice(0, 12), headSha: target.headSha.slice(0, 12) },
-          pr: pr && { number: pr.number, title: pr.title, body: pr.body.slice(0, 6000), author: pr.author, baseRef: pr.baseRef, draft: pr.draft },
-          phase: store.phase,
-          plan: store.plan && { summary: store.plan.summary },
-          files: store.files.map((f) => {
-            const note = notes.get(f.path);
-            return { path: f.path, oldPath: f.oldPath, status: f.status, additions: f.additions, deletions: f.deletions, binary: f.binary, skipped: skippedKind(f.path), reviewState: f.reviewState, priority: note?.priority, note: note?.note };
-          }),
-          pending: store.pending.map(({ id, path, side, line, startLine, author, body }) => ({ id, path, side, line, startLine, author, body })),
-          proposals: store.proposals.map(({ id, path, startLine, endLine, note }) => ({ id, path, startLine, endLine, note })),
-          recommendation: store.recommendation,
-          language: store.language,
-          presence: store.presence,
-          warnings: store.warnings.map((w) => w.message),
-        });
-      }),
+    tool(
+      'get_review_context',
+      'Overview of the review: target refs, PR title/body, the review plan (summary, reading order, per-file notes), changed files (stats, review state; skipped = lockfile/generated, summarized by get_file_diff), pending comments and recommendation (bodies only with includeBodies), change proposals, presence and phase. Empty fields are omitted. detail "full" adds the whole PR body, comment bodies and the chat / review languages.',
+      reviewContextShape,
+      async (input) => guard(() => ok(reviewContext(store, input))),
     ),
 
     tool(
@@ -133,7 +155,7 @@ export function createDuoTools(store: ReviewStore, notify: (text: string) => voi
       async (input) =>
         guard(() => {
           const p = store.addProposal(input);
-          return ok({ ok: true, id: p.id, replaces: p.original });
+          return ok({ ok: true, id: p.id });
         }),
     ),
 
