@@ -106,6 +106,7 @@ UI の操作:
 | POST | `/api/agent/interrupt` | 実行中のターンを中断する |
 | PUT | `/api/agent/model` | エージェントのモデルを切り替える（`{ model }`。specs/sessions/agent-session.md#モデルの切り替え） |
 | PUT | `/api/agent/effort` | エージェントの effort（思考の深さ）を切り替える（`{ effort }`、`null` でモデルの既定に戻す。specs/sessions/agent-session.md#effort-の切り替え） |
+| PUT | `/api/language` | チャットと review の言語を切り替える（`{ conversation?, review? }`、それぞれタグか `null`、省いた側はそのまま。specs/commands/start.md#言語） |
 | POST | `/api/agent/restart` | エージェントセッションを作り直す（認証を変えたあとなど） |
 | PUT | `/api/presence` | 人間のカーソル |
 | PUT | `/api/follow` | `{ followAgent }` |

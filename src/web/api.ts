@@ -31,6 +31,7 @@ export const api = {
   interrupt: () => call<{ ok: true }>('POST', '/api/agent/interrupt'),
   setModel: (model: string) => call<{ ok: true }>('PUT', '/api/agent/model', { model }),
   setEffort: (effort: EffortLevel | null) => call<{ ok: true }>('PUT', '/api/agent/effort', { effort }),
+  setLanguage: (language: { conversation?: string | null; review?: string | null }) => call<{ ok: true }>('PUT', '/api/language', language),
   restart: () => call<{ ok: true }>('POST', '/api/agent/restart'),
   presence: (c: { path: string; startLine?: number | undefined; endLine?: number | undefined; side?: Side | undefined } | null) => call<{ ok: true }>('PUT', '/api/presence', c),
   follow: (followAgent: boolean) => call<{ ok: true }>('PUT', '/api/follow', { followAgent }),

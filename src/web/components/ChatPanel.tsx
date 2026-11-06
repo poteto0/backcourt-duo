@@ -4,7 +4,7 @@ import { api, ApiError } from '../api';
 import { renderMarkdown } from '../markdown';
 import { chat, composerInsert, hereRef, openFile, snap } from '../store';
 import { onRefClick } from './refs';
-import { describeLanguage } from '../../shared/language';
+import { describeLanguage, languageName } from '../../shared/language';
 
 const STATUS_LABEL: Record<string, string> = {
   disabled: 'Agent disabled',
@@ -33,7 +33,6 @@ export function ChatPanel() {
   let stick = true;
 
   const status = () => s().agent.status;
-  const languageTitle = () => `${describeLanguage(s().language)}\nSet with --lang / --chat-lang / --review-lang or ~/.backcourt-duo/config.json (restart to apply)`;
   const canSend = () => status() === 'waiting' || status() === 'thinking';
 
   // Auto-scroll while the user is at the bottom.
@@ -82,16 +81,13 @@ export function ChatPanel() {
           <span class="sub">
             {s().agent.auth ? `${s().agent.auth!.mode}${s().agent.auth!.account ? ` · ${s().agent.auth!.account}` : ''}${s().agent.auth!.subscription ? ` · ${s().agent.auth!.subscription}` : ''}` : ''}
             <Show when={!s().agent.models?.length && s().agent.model}> · {s().agent.model}</Show>
-            <span class="lang" title={languageTitle()}>
-              {' '}
-              · 💬 {s().language.conversation?.tag ?? 'auto'} · 📝 {s().language.review?.tag ?? 'auto'}
-            </span>
           </span>
         </div>
         <Show when={s().agent.models?.length}>
           <ModelPicker onError={setError} />
           <EffortPicker onError={setError} />
         </Show>
+        <LanguagePicker onError={setError} />
         <div class="spacer" />
         <span class={`status st-${status()}`}>
           <span class="pulse" />
@@ -194,15 +190,16 @@ export function ChatPanel() {
   );
 }
 
-/** A header select that switches an agent setting; reverts and reports when the server refuses. */
-function AgentSelect(props: { title: string; value: string; options: Array<{ value: string; label: string; title?: string }>; apply: (value: string) => Promise<unknown>; onError: (message: string) => void }) {
-  const status = () => snap()!.agent.status;
+type SelectOption = { value: string; label: string; title?: string };
+
+/** A header select that switches a setting; reverts and reports when the server refuses. */
+function HeaderSelect(props: { title: string; value: string; options: SelectOption[]; apply: (value: string) => Promise<unknown>; onError: (message: string) => void; disabled?: boolean }) {
   return (
     <select
       class="model-select"
       title={props.title}
       value={props.value}
-      disabled={status() !== 'waiting' && status() !== 'thinking'}
+      disabled={props.disabled}
       onChange={(e) => {
         const el = e.currentTarget;
         void props.apply(el.value).catch((err: Error) => {
@@ -220,12 +217,19 @@ function AgentSelect(props: { title: string; value: string; options: Array<{ val
   );
 }
 
+/** Model and effort can only be switched on a running agent. */
+const agentDown = () => {
+  const status = snap()!.agent.status;
+  return status !== 'waiting' && status !== 'thinking';
+};
+
 /** Switches the agent's model for the next turns (PUT /api/agent/model). */
 function ModelPicker(props: { onError: (message: string) => void }) {
   const agent = () => snap()!.agent;
   // The server keeps `agent.model` as one of the option values (or a raw id the list doesn't cover).
   return (
-    <AgentSelect
+    <HeaderSelect
+      disabled={agentDown()}
       title="Model for the next turns"
       value={agent().model ?? ''}
       options={(agent().models ?? []).map((m) => ({ value: m.value, label: m.displayName, title: m.description }))}
@@ -241,7 +245,8 @@ function EffortPicker(props: { onError: (message: string) => void }) {
   const levels = createMemo(() => agent().models?.find((m) => m.value === agent().model)?.supportedEffortLevels ?? []);
   return (
     <Show when={levels().length}>
-      <AgentSelect
+      <HeaderSelect
+        disabled={agentDown()}
         title="Reasoning effort for the next turns"
         value={agent().effort ?? ''}
         options={[{ value: '', label: 'effort: default' }, ...levels().map((l) => ({ value: l, label: `effort: ${l}` }))]}
@@ -249,6 +254,40 @@ function EffortPicker(props: { onError: (message: string) => void }) {
         onError={props.onError}
       />
     </Show>
+  );
+}
+
+const LANGUAGES = ['en', 'ja', 'zh-Hans', 'zh-Hant', 'ko', 'es', 'fr', 'de', 'pt', 'it', 'ru', 'vi', 'id'];
+const languageOptions = (icon: string, auto: string): SelectOption[] => [
+  { value: '', label: `${icon} auto`, title: auto },
+  ...LANGUAGES.map((t) => ({ value: t, label: `${icon} ${t}`, title: languageName(t) })),
+];
+const CHAT_LANGUAGE_OPTIONS = languageOptions('💬', 'Follows the language you write in');
+const REVIEW_LANGUAGE_OPTIONS = languageOptions('📝', 'Follows the chat language, else the PR’s');
+
+/** Chat (💬) and review (📝) languages (PUT /api/language, one side at a time); saved to the user config. */
+function LanguagePicker(props: { onError: (message: string) => void }) {
+  const language = () => snap()!.language;
+  // A review that only follows chat shows as auto.
+  const reviewTag = () => (language().review?.source === 'chat' ? '' : (language().review?.tag ?? ''));
+  const title = (what: string) => `${what}\n${describeLanguage(language())}\nSaved to ~/.backcourt-duo/config.json (--lang / env / .backcourt-duo.json still win at startup)`;
+  return (
+    <>
+      <HeaderSelect
+        title={title('Chat language')}
+        value={language().conversation?.tag ?? ''}
+        options={CHAT_LANGUAGE_OPTIONS}
+        apply={(v) => api.setLanguage({ conversation: v || null })}
+        onError={props.onError}
+      />
+      <HeaderSelect
+        title={title('Review language (what is posted to GitHub)')}
+        value={reviewTag()}
+        options={REVIEW_LANGUAGE_OPTIONS}
+        apply={(v) => api.setLanguage({ review: v || null })}
+        onError={props.onError}
+      />
+    </>
   );
 }
 

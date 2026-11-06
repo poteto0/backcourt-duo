@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadConfig, resolveAccountDisplay, resolveEffort, resolveModel } from './config.js';
+import { loadConfig, resolveAccountDisplay, resolveEffort, resolveModel, saveUserConfig } from './config.js';
 import { displayAccount, resolveAgentAuth } from './auth/agent.js';
 
 const EMAIL = 'alice@example.com';
@@ -78,4 +78,27 @@ test('resolveAgentAuth (claude-code) never puts the raw email in the summary unl
     if (prev === undefined) delete process.env['BACKCOURT_DUO_CLAUDE_PATH'];
     else process.env['BACKCOURT_DUO_CLAUDE_PATH'] = prev;
   }
+});
+
+test('saveUserConfig: creates the file, merges into existing keys, null removes, a string language is split', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'bcd-config-'));
+  const path = join(dir, 'nested', 'config.json');
+  await saveUserConfig({ agent: { model: 'opus', effort: 'high' } }, path);
+  assert.deepEqual(loadConfig(path).value, { agent: { model: 'opus', effort: 'high' } });
+
+  await writeFile(path, JSON.stringify({ privacy: { account: 'mask' }, agent: { model: 'opus', effort: 'high', extra: 1 }, language: 'ja', other: true }));
+  await Promise.all([saveUserConfig({ agent: { effort: null } }, path), saveUserConfig({ language: { review: 'en' } }, path)]);
+  assert.deepEqual(JSON.parse(await readFile(path, 'utf8')), {
+    privacy: { account: 'mask' },
+    agent: { model: 'opus', extra: 1 },
+    language: { conversation: 'ja', review: 'en' },
+    other: true,
+  });
+});
+
+test('saveUserConfig: leaves a broken file alone', async () => {
+  const path = join(await mkdtemp(join(tmpdir(), 'bcd-config-')), 'config.json');
+  await writeFile(path, '{ nope');
+  await assert.rejects(saveUserConfig({ agent: { model: 'opus' } }, path), /not saving/);
+  assert.equal(await readFile(path, 'utf8'), '{ nope');
 });

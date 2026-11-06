@@ -1,6 +1,7 @@
 // ReviewStore — the single source of truth (specs/architecture.md).
 import { EventEmitter } from 'node:events';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
+import { writeFileAtomic } from './fs.js';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { isCommentable, isCommentableRange, rightLineTexts } from './diff.js';
@@ -29,7 +30,10 @@ import type {
   Warning,
 } from '../shared/types.js';
 import { commentRef, formatRef } from '../shared/types.js';
-import { describeLanguage, looksLikeOtherLanguage, type LanguageSettings } from '../shared/language.js';
+import { describeLanguage, languageSetting, languageSettings, looksLikeOtherLanguage, type LanguageSettings } from '../shared/language.js';
+import { languageInstructions } from './agent/prompts.js';
+
+const LANGUAGE_NOTE = 'language settings changed';
 
 type LanguageTags = { conversation: string | null; review: string | null };
 
@@ -81,8 +85,8 @@ export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] 
     readonly target: ReviewTarget,
     readonly diff: DiffFile[],
     private readonly statePath: string | null,
-    /** Fixed at startup (specs/commands/start.md#言語). */
-    readonly language: LanguageSettings = { conversation: null, review: null },
+    /** Resolved at startup; the UI can change it (specs/commands/start.md#言語). */
+    public language: LanguageSettings = { conversation: null, review: null },
   ) {
     super();
     for (const f of diff) this.diffByPath.set(f.path, f);
@@ -185,7 +189,7 @@ export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] 
     const was = data.language ?? { conversation: null, review: null };
     const tags = this.languageTags();
     if (this.agentSessionId && (was.conversation !== tags.conversation || was.review !== tags.review)) {
-      this.logActivity(`language settings changed since this conversation started (${describeLanguage(this.language)}); follow the Language section of your instructions from now on`);
+      this.logActivity(`${LANGUAGE_NOTE} since this conversation started (${describeLanguage(this.language)}); follow the Language section of your instructions from now on`);
     }
     if (!this.agentSessionId && this.chat.length) {
       this.chat.push(this.makeMessage('system', 'The branch changed since the last session; the agent starts a fresh conversation (pending comments were kept where lines still match).'));
@@ -220,11 +224,23 @@ export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] 
       recommendation: this.recommendation,
       language: this.languageTags(),
     };
-    const dir = join(this.statePath, '..');
-    await mkdir(dir, { recursive: true });
-    const tmp = `${this.statePath}.${process.pid}.tmp`;
-    await writeFile(tmp, JSON.stringify(data));
-    await rename(tmp, this.statePath);
+    await writeFileAtomic(this.statePath, JSON.stringify(data));
+  }
+
+  /**
+   * Switch languages from the UI; `undefined` keeps a side, `null` unsets it (review then follows chat).
+   * The running agent's system prompt keeps the old Language section until a restart, so the new one reaches it
+   * via the activity log — one note, replacing any earlier one not yet delivered.
+   */
+  setLanguage(patch: { conversation?: string | null | undefined; review?: string | null | undefined }): void {
+    const cur = this.language;
+    const conversation = patch.conversation === undefined ? (cur.conversation?.tag ?? null) : patch.conversation;
+    const review = patch.review === undefined ? (cur.review && cur.review.source !== 'chat' ? cur.review.tag : null) : patch.review;
+    this.language = languageSettings(conversation ? languageSetting(conversation, 'ui') : null, review ? languageSetting(review, 'ui') : null);
+    this.activity = this.activity.filter((l) => !l.startsWith(LANGUAGE_NOTE));
+    this.logActivity(`${LANGUAGE_NOTE} (${describeLanguage(this.language)}); follow this instead of the Language section of your instructions:\n${languageInstructions(this.language)}`);
+    this.system(`🌐 Language switched: ${describeLanguage(this.language)}.`);
+    this.changed();
   }
 
   private languageTags(): LanguageTags {
@@ -440,6 +456,11 @@ export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] 
     this.emitChat({ type: 'append', message: msg });
     if (!msg.streaming) this.scheduleSave();
     return msg;
+  }
+
+  /** A system line in the chat (shown to the human, not sent to the agent). */
+  system(text: string): ChatMessage {
+    return this.appendChat(this.makeMessage('system', text));
   }
 
   /** Streaming targets are almost always the newest messages: search from the end. */

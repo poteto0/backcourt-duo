@@ -1,14 +1,15 @@
 // User settings: ~/.backcourt-duo/config.json, repository settings: <repo>/.backcourt-duo.json
 // — specs/commands/start.md#設定ファイル. Never holds credentials (AGENTS.md principle 6).
 import { readFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
 import type { AccountDisplay, EffortLevel } from '../shared/types.js';
-import { canonicalLanguageTag, LANGUAGE_TAG_HINT, languageName, type LanguageSetting, type LanguageSettings } from '../shared/language.js';
-import { AccountDisplaySchema, EffortSchema } from './schemas.js';
+import { canonicalLanguageTag, LANGUAGE_TAG_HINT, languageSetting, languageSettings, type LanguageSetting, type LanguageSettings } from '../shared/language.js';
+import { AccountDisplaySchema, EffortSchema, LanguageTagSchema } from './schemas.js';
+import { writeFileAtomic } from './fs.js';
 
-const LanguageTagSchema = z.string().transform((raw, ctx) => canonicalLanguageTag(raw) ?? (ctx.addIssue(`"${raw}" is ${LANGUAGE_TAG_HINT}`), z.NEVER));
 /** A plain string sets both. */
 const LanguageSchema = z.preprocess(
   (v) => (typeof v === 'string' ? { conversation: v, review: v } : v),
@@ -35,8 +36,10 @@ interface Loaded<T> {
   warnings: string[];
 }
 
+export const USER_CONFIG_PATH = join(homedir(), '.backcourt-duo', 'config.json');
+
 /** A missing file is an empty config; a broken one is ignored with a warning. */
-export function loadConfig(path = join(homedir(), '.backcourt-duo', 'config.json')): Loaded<Config> {
+export function loadConfig(path = USER_CONFIG_PATH): Loaded<Config> {
   return loadJson(path, ConfigSchema);
 }
 
@@ -116,18 +119,57 @@ export function resolveLanguage(
   };
   const pick = (candidates: Array<[string | undefined, string]>): LanguageSetting | null => {
     const hit = candidates.find(([tag]) => tag);
-    return hit ? { tag: hit[0]!, name: languageName(hit[0]!), source: hit[1] } : null;
+    return hit ? languageSetting(hit[0]!, hit[1]) : null;
   };
   const user = config.value.language ?? {};
   const envBoth = fromEnv('BACKCOURT_DUO_LANG');
   const conversation = pick([[flags.chatLang, '--chat-lang'], [flags.lang, '--lang'], [fromEnv('BACKCOURT_DUO_CHAT_LANG'), 'BACKCOURT_DUO_CHAT_LANG'], [envBoth, 'BACKCOURT_DUO_LANG'], [user.conversation, 'config']]);
-  const review =
-    pick([[flags.reviewLang, '--review-lang'], [flags.lang, '--lang'], [fromEnv('BACKCOURT_DUO_REVIEW_LANG'), 'BACKCOURT_DUO_REVIEW_LANG'], [envBoth, 'BACKCOURT_DUO_LANG'], [repo.value.language?.review, REPO_CONFIG_FILE], [user.review, 'config']]) ??
-    (conversation && { ...conversation, source: 'chat' });
-  return { value: { conversation, review }, warnings };
+  const review = pick([[flags.reviewLang, '--review-lang'], [flags.lang, '--lang'], [fromEnv('BACKCOURT_DUO_REVIEW_LANG'), 'BACKCOURT_DUO_REVIEW_LANG'], [envBoth, 'BACKCOURT_DUO_LANG'], [repo.value.language?.review, REPO_CONFIG_FILE], [user.review, 'config']]);
+  return { value: languageSettings(conversation, review), warnings };
 }
 
 /** resolveLanguage with the repository's `.backcourt-duo.json` (when the repo root is known). */
 export function loadLanguage(flags: LanguageFlags, repoRoot: string | null): Loaded<LanguageSettings> {
   return resolveLanguage(flags, process.env, repoRoot ? loadJson(join(repoRoot, REPO_CONFIG_FILE), RepoConfigSchema) : undefined);
+}
+
+/** Settings the UI changes; `null` removes the key (back to the default). */
+export interface SettingsPatch {
+  agent?: { model?: string | null | undefined; effort?: EffortLevel | null | undefined };
+  language?: { conversation?: string | null | undefined; review?: string | null | undefined };
+}
+
+let saving: Promise<void> = Promise.resolve();
+
+/**
+ * Write UI-changed settings into the user config (specs/commands/start.md#設定ファイル), keeping every other key.
+ * Writes are serialised and atomic. A file that is not a JSON object is left alone (throws) rather than overwritten.
+ */
+export function saveUserConfig(patch: SettingsPatch, path = USER_CONFIG_PATH): Promise<void> {
+  const run = saving.then(async () => {
+    let raw: unknown = {};
+    try {
+      raw = JSON.parse(await readFile(path, 'utf8'));
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw new Error(`not saving to ${path}: ${(err as Error).message}`);
+    }
+    if (!isObject(raw)) throw new Error(`not saving to ${path}: not a JSON object`);
+    // `"language": "ja"` sets both; expand it so one side can change.
+    if (typeof raw['language'] === 'string') raw['language'] = { conversation: raw['language'], review: raw['language'] };
+    for (const [section, values] of Object.entries(patch) as Array<[string, Record<string, string | null | undefined>]>) {
+      const target = isObject(raw[section]) ? raw[section] : (raw[section] = {});
+      for (const [key, value] of Object.entries(values)) {
+        if (value === null) delete target[key];
+        else if (value !== undefined) target[key] = value;
+      }
+    }
+    await writeFileAtomic(path, `${JSON.stringify(raw, null, 2)}\n`);
+    if (path === USER_CONFIG_PATH) cached = undefined;
+  });
+  saving = run.catch(() => undefined);
+  return run;
+}
+
+function isObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
