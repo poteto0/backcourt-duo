@@ -91,7 +91,7 @@ stopped（サーバー終了時）
 
 | tool | 入力 | 効果 |
 |---|---|---|
-| `get_review_context` | — | target、PR（タイトルと本文）、ファイル一覧（統計、reviewState、プランのメモ、lockfile / 生成物なら `skipped: 'lockfile'\|'generated'`）、pending、変更案、presence、phase、`language` |
+| `get_review_context` | `{ detail?: 'lean'\|'full', includeBodies? }` | target、PR（タイトルと本文）、プラン（`summary` と読む順番。各ファイルの `priority` / `note` はプラン側にだけ載せる）、ファイル一覧（統計、reviewState、lockfile / 生成物なら `skipped: 'lockfile'\|'generated'`）、pending、変更案、推奨 verdict、presence、phase、warnings。デフォルトの `lean` では PR 本文を 1500 文字で切り、pending は `{ id, path, side, line, startLine, author }`、推奨 verdict は `{ event }` だけ返し（本文は `includeBodies: true` のときだけ）、`language` は省く（システムプロンプトにあるため）。`full` では PR 本文を 6000 文字まで、本文と `language` も返す。どちらでも入れ子も含めて空配列・空オブジェクト・空文字列・`false`・`null`・未設定のフィールドは省く（warnings が無ければ `warnings` ごと省く） |
 | `get_file_diff` | `{ path, offset?, force? }` | そのファイルの diff をテキストで返す。追加行と文脈行には新しい行番号 `R<new>`、削除行には古い行番号 `L<old>` を付ける。コメントできる行かどうかもこれで判断できる。1 回で返すのは diff 600 行までで、切り詰めたときは末尾に続きの `offset`（読み飛ばす diff 行数）を示す。1 行は 300 文字で切る。lockfile（`pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`, `Cargo.lock`, `go.sum`, `poetry.lock`, `Gemfile.lock`）と生成物（`dist/` `build/` `vendor/` 配下、`*.min.js`, `*.min.css`, `*.map`, `*.snap`。ディレクトリはどの階層でもよい）は本文を返さず、`(skipped: lockfile — 1,234 changed lines. Pass force: true to read it.)` の 1 行だけを返す。`force: true` なら通常どおり返す |
 | `set_review_plan` | `{ summary, files: [{ path, priority: 'high'\|'medium'\|'low', note }] }` | プランを登録し、phase を `walkthrough` にする |
 | `focus` | `{ path, startLine?, endLine?, side?, note? }` | エージェントのカーソルを動かし、そのファイルを `in-progress` にする |
@@ -104,7 +104,7 @@ stopped（サーバー終了時）
 | `recommend_review` | `{ event: 'COMMENT'\|'APPROVE'\|'REQUEST_CHANGES', body }` | wrapup で推奨 verdict と総評を store の `recommendation` に登録する（再度呼ぶと上書き）。Submit ダイアログの初期値になる。投稿はしない |
 | `set_phase` | `{ phase: 'walkthrough'\|'wrapup' }` | |
 
-すべてのツールの結果は JSON テキストで返す（トークン節約のためインデントなしの compact JSON。文字列はそのまま返す）。失敗した場合は `isError: true` にして理由を返す。
+すべてのツールの結果は JSON テキストで返す（トークン節約のためインデントなしの compact JSON。文字列はそのまま返す）。`propose_change` は `{ ok, id }` だけを返す（置き換え前の行は直前の `get_file_diff` で見ているので返さない）。失敗した場合は `isError: true` にして理由を返す。
 
 ## 言語
 

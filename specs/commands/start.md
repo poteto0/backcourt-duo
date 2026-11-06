@@ -115,7 +115,7 @@ backcourt-duo [start] [options]
   両方向けの指定（`--lang`、`BACKCOURT_DUO_LANG`）より優先する
 - CLI に不正なタグを渡すと exit 64。環境変数の不正な値は warning を出して無視する。設定ファイルの不正な値はファイル全体を無視する（上記）
 - 解決した言語は store の `language`（`{ tag, name, source }` または `null`）に入り、UI（チャットヘッダーの `💬 ja · 📝 en`）と
-  エージェント（システムプロンプトと `get_review_context`）の両方に同じ値を見せる。起動時のターミナル出力と `doctor` には
+  エージェント（システムプロンプトと `get_review_context` の `detail: 'full'`）の両方に同じ値を見せる。起動時のターミナル出力と `doctor` には
   `chat ja (config) · review en (--review-lang)` のように、どこで決まったかも表示する
 - 実行中には切り替えない（再起動で反映）。プロンプトへの反映は specs/sessions/agent-session.md#言語
 - 人間が書いた pending コメントは翻訳しない。review の言語と違う文字体系で書かれているように見えるもの（文字種による推定。
