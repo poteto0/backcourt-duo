@@ -104,7 +104,7 @@ stopped（サーバー終了時）
 | `recommend_review` | `{ event: 'COMMENT'\|'APPROVE'\|'REQUEST_CHANGES', body }` | wrapup で推奨 verdict と総評を store の `recommendation` に登録する（再度呼ぶと上書き）。Submit ダイアログの初期値になる。投稿はしない |
 | `set_phase` | `{ phase: 'walkthrough'\|'wrapup' }` | |
 
-すべてのツールの結果は JSON テキストで返す。失敗した場合は `isError: true` にして理由を返す。
+すべてのツールの結果は JSON テキストで返す（トークン節約のためインデントなしの compact JSON。文字列はそのまま返す）。失敗した場合は `isError: true` にして理由を返す。
 
 ## 言語
 
