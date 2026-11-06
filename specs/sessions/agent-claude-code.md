@@ -12,6 +12,10 @@ backcourt-duo はトークンを読まないし、保存もしない。認証の
   1. `BACKCOURT_DUO_CLAUDE_PATH`
   2. PATH 上の `claude`
   3. 見つからなければ SDK に同梱されている実行ファイル（`pathToClaudeCodeExecutable` を指定しない）
+- 同梱の実行ファイル（`@anthropic-ai/claude-agent-sdk-<platform>-<arch>`、1 つ約 320MB）は、このリポジトリの lockfile では
+  `pnpm-workspace.yaml` の `ignoredOptionalDependencies` で除外している。Nix の `fetchPnpmDeps` が全プラットフォーム分を取得し、
+  初回ビルドが非常に遅くなるため（#36）。したがって、ソースからのビルドと Nix パッケージでは 3 は存在せず、`claude` が必須になる。
+  npm からインストールした場合は同梱の実行ファイルが入る
 - 子プロセスの環境変数からは `ANTHROPIC_API_KEY` と `ANTHROPIC_AUTH_TOKEN` を**取り除く**。
   これらが残っていると、Claude Code はサブスクリプションより API キーを優先してしまうためである（いわゆる「キーがサインインを隠す」問題）。
   取り除いた場合は `warnings` に「ANTHROPIC_API_KEY is set but ignored in claude-code mode」を追加する

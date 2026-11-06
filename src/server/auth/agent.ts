@@ -1,4 +1,5 @@
 // Agent (Claude) authentication — specs/sessions/agent-claude-code.md, agent-api-key.md
+import { createRequire } from 'node:module';
 import { run, which, CommandNotFoundError } from '../exec.js';
 import type { AccountDisplay, AgentAuthMode, AgentAuthSummary } from '../../shared/types.js';
 import { VERSION } from '../version.js';
@@ -8,7 +9,7 @@ export interface ResolvedAgentAuth {
   summary: AgentAuthSummary;
   /** Environment for the Claude Code subprocess. Contains secrets — never log or send to clients. */
   env: Record<string, string | undefined>;
-  /** Claude Code executable to use; undefined = SDK bundled binary. */
+  /** Claude Code executable to use; undefined = SDK bundled binary (only present in npm installs). */
   executable: string | undefined;
 }
 
@@ -22,6 +23,29 @@ export async function findClaudeBinary(): Promise<string | null> {
   const override = process.env['BACKCOURT_DUO_CLAUDE_PATH'];
   if (override) return override;
   return which('claude');
+}
+
+/**
+ * Whether the SDK's own per-platform Claude Code binary is installed. This repo's lockfile leaves those
+ * packages out (pnpm-workspace.yaml, #36), so from a source or Nix build it is absent; an npm install keeps it.
+ */
+export function bundledClaudeAvailable(): boolean {
+  let req: NodeJS.Require;
+  try {
+    req = createRequire(import.meta.resolve('@anthropic-ai/claude-agent-sdk'));
+  } catch {
+    return false;
+  }
+  const base = `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}`;
+  for (const name of [base, `${base}-musl`]) {
+    try {
+      req.resolve(`${name}/package.json`);
+      return true;
+    } catch {
+      // try the next variant
+    }
+  }
+  return false;
 }
 
 /** Credentials that would shadow the Claude Code sign-in (specs/sessions/agent-claude-code.md). */
@@ -139,6 +163,10 @@ export async function resolveAgentAuth(mode: AgentAuthMode, accountDisplay?: Acc
     // Prefer the user's installed claude binary even in api-key mode (same version they use), if present.
     r.executable = (await findClaudeBinary()) ?? undefined;
     if (r.executable) r.summary.binary = r.executable;
+    else if (r.summary.ready && !bundledClaudeAvailable()) {
+      r.summary.ready = false;
+      r.summary.hint = 'Claude Code is not installed (needed to run the agent even with an API key). Install it (npm i -g @anthropic-ai/claude-code) or set BACKCOURT_DUO_CLAUDE_PATH.';
+    }
     return r;
   }
   return resolveClaudeCode(accountDisplay);
