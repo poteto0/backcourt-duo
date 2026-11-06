@@ -12,6 +12,7 @@ nix profile install github:poteto0/backcourt-duo # backcourt-duo コマンドと
 ```
 
 実行時の Node は Nix の Node 26 に固定されるので、手元の Node のバージョンには影響されない。
+エージェントは手元の `claude`（Claude Code）を使うので、事前にインストールしておくこと（`--auth api-key` のときも必要）。
 
 ## 開発用セットアップ
 

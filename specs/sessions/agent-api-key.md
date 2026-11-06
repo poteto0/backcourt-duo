@@ -14,6 +14,12 @@ CI に近い環境や、サブスクではなく API の従量課金で使いた
 どれもなければ `ready: false` とし、`hint: 'Set ANTHROPIC_API_KEY (or use --auth claude-code)'` を返す。
 `ANTHROPIC_BASE_URL` が設定されていればそのまま渡す（プロキシやゲートウェイ用）。
 
+## 実行ファイル
+
+このモードでもエージェントは Claude Code の子プロセスとして動く。実行ファイルは agent-claude-code.md と同じ順番（`BACKCOURT_DUO_CLAUDE_PATH` → PATH 上の `claude` → SDK に同梱の実行ファイル）で探す。
+キーはあるのにどれも見つからない場合（同梱の実行ファイルが除外されたソースビルドや Nix パッケージで、`claude` が入っていないとき）は、
+`ready: false` とし、`hint` で Claude Code のインストールか `BACKCOURT_DUO_CLAUDE_PATH` の設定を案内する。
+
 ## 子プロセスに渡す環境変数
 
 - `process.env` をコピーし、見つけた値を `ANTHROPIC_API_KEY`（3 の場合は `ANTHROPIC_AUTH_TOKEN`）として設定する
