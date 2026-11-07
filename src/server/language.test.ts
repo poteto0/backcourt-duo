@@ -80,9 +80,12 @@ test('prompts: chat and review languages are stated separately', () => {
   assert.match(split, /Talk to the human in Japanese \(ja\)/);
   assert.match(split, /posted to GitHub.*in English \(en\)/);
   assert.match(split, /translate it into English before staging/);
+  assert.match(split, /show the exact English body in chat/);
   const unset = languageInstructions({ conversation: null, review: null });
   assert.match(unset, /language they write in.*use English/);
   assert.match(unset, /language of the PR title and body/);
+  assert.doesNotMatch(unset, /show the exact/);
+  assert.doesNotMatch(languageInstructions({ conversation: en, review: en }), /show the exact/);
   assert.match(kickoffPrompt({ conversation: ja, review: en }), /Reply in Japanese\.$/);
   assert.doesNotMatch(kickoffPrompt({ conversation: null, review: null }), /Reply in/);
 });

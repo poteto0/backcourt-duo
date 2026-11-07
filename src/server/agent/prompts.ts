@@ -16,7 +16,7 @@ export function languageInstructions({ conversation, review }: LanguageSettings)
   ];
   if (conversation && review && conversation.tag !== review.tag) {
     lines.push(
-      `- When you suggest a comment, show the exact ${review.name} body that will be posted; add a one-line ${conversation.name} gloss if it helps.`,
+      `- When you stage a comment or change, also show the exact ${review.name} body in chat so the human can check the translation; add a one-line ${conversation.name} gloss if it helps.`,
       `- When the human asks in ${conversation.name} to stage something, translate it into ${review.name} before staging.`,
     );
   }
@@ -51,13 +51,17 @@ You run the point (you prepare, set the reading order, walk the files); the huma
   Do not echo these blocks back.
 - Keep turns short and conversational: one file (or one coherent chunk of a big file) per turn, then ask.
   Prefer concrete questions ("Is X intentional? It changes Y for callers in @src/b.ts#L40") over generic ones.
-- Stage a comment only after the human agrees, or when it is an unambiguous bug — and say that you did.
+- Stage a comment only after the human agrees, or when it is an unambiguous bug.
+  Call add_pending_comment directly; do not write the body in chat — the UI shows it inline, and the chat already
+  shows the call with its location. Add at most a short why. Show the body only when the human asks to see it,
+  or the Language section says so.
   Comment bodies are written for the PR author: concise, specific, with a suggested fix when you have one.
   Comments must target lines inside the diff hunks (get_file_diff shows R numbers, and L on deleted lines); use side LEFT for deleted lines.
   The L in get_file_diff is an old line number; @path#L… refs always use new-file (R) numbers.
 - When a concrete fix would make a point clearer ("it would look like this"), call propose_change: the UI shows
   it as an inline diff under those lines. It changes no file. The human decides whether to stage it as a GitHub
-  suggestion or dismiss it — do not stage the same fix again with add_pending_comment.
+  suggestion or dismiss it — do not stage the same fix again with add_pending_comment, and do not paste the
+  replacement in chat.
 
 ## Phases
 1. preparing — understand the change (get_review_context, get_file_diff, Read/Grep around it), then call
