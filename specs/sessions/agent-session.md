@@ -11,11 +11,60 @@ stopped（サーバー終了時）
 ```
 
 - サーバーごとに `AgentSession` は 1 つだけ作る。`query({ prompt: AsyncIterable<SDKUserMessage>, options })` を
-  **ストリーミング入力モード**で 1 本張り続け、人間のメッセージはキューに push する
+  **ストリーミング入力モード**で 1 本張り、人間のメッセージはキューに push する。ファイルやフェーズの区切りでは張り直す（#コンテキストのリセット）
 - `includePartialMessages: true` を指定して `stream_event` のテキスト差分をチャットにリアルタイムで流す
 - `result` メッセージを受け取ったら 1 ターンの終わりとみなし、`status = 'waiting'` にする
 - `POST /api/agent/interrupt` で `query.interrupt()` を呼ぶ
 - `POST /api/agent/restart` で close して作り直す（`resume` で同じ会話を続ける）
+- 保存するセッション ID（`agentSessionId`）は `result` を受け取ったときの `session_id`。init では保存しない（リセット直後の、
+  引き継ぎメッセージをまだ送っていない会話を再起動時に resume しないため）
+
+## コンテキストのリセット
+
+1 本の `query()` を張り続けると会話履歴が線形に伸び、ファイル数の多いレビューでは終盤に毎ターン大量のトークンを再送することになる。
+状態の正は `ReviewStore` なので、会話履歴は区切りごとに捨て、store を記憶として引き継ぐ。
+
+- **捨てるもの**: `query()` の会話履歴
+- **残すもの**: `ReviewStore`（phase、プラン、既読、pending、変更案、presence、チャットログ）。新しい状態は作らない
+
+### トリガ
+
+ターンの終わり（`result`）に、前のターンの終わりと比べて次のどれかに当たればリセットする。
+
+| 理由 | 条件 |
+|---|---|
+| `phase → <phase>` | phase が変わった（preparing → walkthrough → wrapup など） |
+| `file reviewed` | `reviewed` のファイル数が増えた（`mark_file_reviewed` など） |
+| `context reached <n> tokens` | このターン最後のリクエストのプロンプト（`input + cache_read + cache_write`）が 60k トークン以上 |
+
+- エージェントのターン中に人間が次のメッセージを送っていたら、そのターンではリセットしない（その返事はまだ古い会話に残っているため）。
+  比較の基準は前のターンのまま残すので、次のターンの終わりで改めて判定する
+- `BACKCOURT_DUO_CONTEXT_RESET=off`（`0` / `false` も可）でリセットを無効にし、従来どおり 1 本の会話を続ける
+
+### 手順
+
+1. 古い `query()` を close し、`resume` を付けずに新しい `query()` を張る（`resume` すると履歴が戻ってしまう）。モデルと effort はそのまま引き継ぐ
+2. チャットに `🧹 Agent context reset (<理由>); it continues from the shared review state.` のシステムメッセージを出す
+3. 新しい `query()` には何も送らずに待つ。次の人間メッセージの先頭に、store から作った引き継ぎメッセージを付ける
+
+```
+<handoff>
+Your earlier conversation was cleared to save context (file reviewed). The shared review state is intact and is the source of truth: …
+your focus: @src/b.ts#L10-L24
+next in plan: @src/c.ts (high: …), @src/d.ts (medium: …), @src/e.ts (low: …) (+4 more)
+pending comments: c_3 @src/a.ts#L8, c_5 @src/b.ts#L12-L14
+change proposals: p_4 @src/b.ts#L20
+your last message: "…（直前のエージェントの発言。300 文字まで）"
+</handoff>
+
+<human_context>…（通常どおり）
+```
+
+- 空の行（プランが無い、pending が無い など）は省く。phase と既読数は続く `<human_context>` に任せる
+- 使用量の表示は、`context` を消し（古い `query()` の値なので）、`costUSD` はリセット前の分を足し続ける。`limits` はそのまま
+- サーバーの再起動による resume とは別物。resume は保存したセッション ID の会話（リセット後なら、引き継ぎ以降の短い会話）を続ける。
+  リセット後に 1 ターンも終わらないうちに再起動したときは、リセット前の会話を resume する
+- 会話のニュアンス（「この設計は意図的と人間が言っていた」など）は store に無いので失われる。必要ならエージェントのメモ欄を足す（#24 の第 2 段階）
 
 ## モデルの切り替え
 
@@ -47,7 +96,8 @@ stopped（サーバー終了時）
 | `costUSD` | `result.total_cost_usd`（`query()` ごとの累積）。API キーのときだけ入れる（サブスクでは請求額ではないため） | `result` を受け取るたび |
 
 - `result` のあとの `context` と `costUSD` は 1 回の store 更新にまとめる
-- `context` と `costUSD` は `query()` ごとの値なので、`query()` を張り直す（restart・再サインイン）ときに消す。`limits` はアカウントの値なので残す
+- `context` と `costUSD` は `query()` ごとの値なので、`query()` を張り直す（restart・再サインイン）ときに消す。`limits` はアカウントの値なので残す。
+  コンテキストのリセットでは `context` だけ消し、`costUSD` は足し続ける（#コンテキストのリセット）
 - UI は「残り」で見せる: context は `1 - used/max`、各窓は `1 - utilization`（`status: 'rejected'` は 0%）。残りが 20% を切ると警告色にする
 - 窓のリセット時刻を表示し、リセット時刻を過ぎた窓は今の値ではないので出さない
 - 何もわかっていないあいだ（最初のターンが終わるまで）はメーター自体を出さない
@@ -62,7 +112,7 @@ stopped（サーバー終了時）
 ```
 
 - `in` / `cache_read` / `cache_write` / `out` / `thinking` / `cost` は `result.modelUsage`（全モデルの合計）の前ターンとの差。`thinking` は 0 のとき省く（`out` に含まれる）
-- `modelUsage` は `query()` ごとの累積なので、`query()` を張り直す（restart・再サインイン）と差分の基準も作り直す。
+- `modelUsage` は `query()` ごとの累積なので、`query()` を張り直す（restart・再サインイン・コンテキストのリセット）と差分の基準も作り直す。
   そのため最初のターンは SDK の報告値そのまま（resume したときは前回までの累積を含む）
 - `tools` はそのターンに呼んだツールごとの「回数:結果の文字数（`tool_result` の `content`）」。MCP ツールは `mcp__duo__` を省いた名前で出す。ツールを呼ばなかったターンでは省く
 - `turn` は `query()` を張ってからのターン数
@@ -81,7 +131,7 @@ stopped（サーバー終了時）
 | `systemPrompt` | `{ type: 'preset', preset: 'claude_code', append: reviewSystemPrompt(language) }` | Claude Code の基本プロンプトにレビュー役の指示と言語の指示（下記）を足す |
 | `settingSources` | `[]` | ユーザーやプロジェクトの hooks・権限設定に振る舞いを左右されないようにする（認証には影響しない） |
 | `includePartialMessages` | `true` | |
-| `resume` | 保存してあるセッション ID | 再起動しても会話を続けられるようにする |
+| `resume` | 保存してあるセッション ID（コンテキストのリセットで張り直すときは付けない） | 再起動しても会話を続けられるようにする |
 | `model` | `--model` > `BACKCOURT_DUO_MODEL` > 設定ファイルの `agent.model`（UI で切り替えるとここに保存される） | 指定がなければ Claude Code の既定モデル |
 | `effort` | `--effort` > `BACKCOURT_DUO_EFFORT` > 設定ファイルの `agent.effort`（UI で切り替えるとここに保存される） | 指定がなければモデルの既定 |
 | `env` | agent-claude-code.md / agent-api-key.md の規則で作った値 | |
