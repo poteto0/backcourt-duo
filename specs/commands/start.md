@@ -87,6 +87,12 @@ backcourt-duo [start] [options]
 - 読み込みは `src/server/config.ts`。zod でスキーマを検証し、壊れた JSON や不正な値のときはファイル全体を無視する。その旨は `AgentAuthSummary.warnings` に入り、`auth status`・`doctor`・チャットに表示される（環境変数の不正な値も同じ）
 - 知らないキーは無視する（ほかの機能の設定を足してもエラーにしない）
 - 認証情報は入れない（AGENTS.md の原則 6）
+- **UI で切り替えた設定はここに書き戻す**（`agent.model`、`agent.effort`、`language.conversation` / `language.review`）。次回の起動からもその値を使う。
+  - 書き込みは `saveUserConfig`（`src/server/config.ts`）が行う。ファイルを読み直して該当キーだけを書き換えるので、ほかのキーや知らないキーは残る。
+    「既定に戻す」（effort の default、言語の auto）はキーを消す。`"language": "ja"` のような文字列は、片方だけ変えられるよう `{ conversation, review }` に展開してから書く
+  - 一時ファイルに書いてから rename する。書き込みは直列化する
+  - 壊れた JSON（オブジェクトでないものも含む）のファイルは上書きせず、保存をやめる。保存に失敗しても切り替え自体はそのまま効いていて、チャットにシステムメッセージで知らせる
+  - CLI オプション・環境変数・リポジトリ設定は書き換えない。それらで指定していると、次回の起動ではそちらが優先する
 
 | キー | 値 | 環境変数 | 説明 |
 |---|---|---|---|
@@ -116,8 +122,10 @@ backcourt-duo [start] [options]
 - CLI に不正なタグを渡すと exit 64。環境変数の不正な値は warning を出して無視する。設定ファイルの不正な値はファイル全体を無視する（上記）
 - 解決した言語は store の `language`（`{ tag, name, source }` または `null`）に入り、UI（チャットヘッダーの `💬 ja · 📝 en`）と
   エージェント（システムプロンプトと `get_review_context` の `detail: 'full'`）の両方に同じ値を見せる。起動時のターミナル出力と `doctor` には
-  `chat ja (config) · review en (--review-lang)` のように、どこで決まったかも表示する
-- 実行中には切り替えない（再起動で反映）。プロンプトへの反映は specs/sessions/agent-session.md#言語
+  `chat ja (config) · review en (--review-lang)` のように、どこで決まったかも表示する（UI のセレクトのツールチップにも出す）
+- 実行中は UI（チャットヘッダーの 💬 / 📝 のセレクト）で切り替えられる。`PUT /api/language { conversation?, review? }`（それぞれタグか `null`。省いた側はそのまま）で
+  store の `language` をすぐ書き換え（`ReviewStore.setLanguage`。`source` は `ui`。review が `null` なら会話に合わせる）、送った側だけをユーザー設定にも保存する（上記「設定ファイル」）。
+  エージェントが動いていなくても切り替えられる。プロンプトへの反映は specs/sessions/agent-session.md#言語
 - 人間が書いた pending コメントは翻訳しない。review の言語と違う文字体系で書かれているように見えるもの（文字種による推定。
   コードブロック・インラインコード・`@path` 参照は除く）には、UI が「Translate to English」ボタンを出す。押すとエージェントに
   翻訳を依頼し、エージェントは訳文をチャットに示して、人間が確認してから `update_pending_comment` で書き換える。

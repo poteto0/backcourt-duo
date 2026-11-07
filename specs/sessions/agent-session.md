@@ -23,7 +23,7 @@ stopped（サーバー終了時）
   UI はこれがあればチャットのヘッダーにモデルのセレクトを出す
 - `PUT /api/agent/model { model }` で `query.setModel(model)` を呼び、`agent.model` を更新してチャットにシステムメッセージを出す。
   会話はそのまま続き、次のターンから新しいモデルが使われる。エージェントが動いていなければ 409
-- 切り替えたモデルは restart や再サインインのあとも使う（サーバーを再起動すると `--model` / 環境変数 / 設定ファイルの値に戻る）
+- 切り替えたモデルは restart や再サインインのあとも使う。設定ファイルの `agent.model` にも保存するので、サーバーを再起動しても使う（`--model` / 環境変数で指定していればそちらが優先。specs/commands/start.md#設定ファイル）
 - init が報告するのは解決済みの ID（例: `claude-sonnet-…`）、切り替えで渡すのはエイリアスなので、サーバーは `agent.model` を
   `value` か `resolvedModel` が一致する選択肢の `value` にそろえてから store に入れる（一致しなければそのまま）。UI は `agent.model` をそのまま選択値に使う
 
@@ -33,7 +33,7 @@ stopped（サーバー終了時）
   UI は選択中のモデルにこれがあるときだけ、モデルのセレクトの隣に effort のセレクト（「default」＋ そのモデルの段階）を出す
 - `PUT /api/agent/effort { effort }` で `query.applyFlagSettings({ effortLevel: effort })` を呼び、`agent.effort` を更新してチャットにシステムメッセージを出す。
   `effort: null` はモデルの既定に戻す。会話はそのまま続き、次のターンから新しい effort が使われる。エージェントが動いていなければ 409
-- 切り替えた effort はモデルと同じく restart や再サインインのあとも使う（サーバーを再起動すると `--effort` / 環境変数 / 設定ファイルの値に戻る）
+- 切り替えた effort はモデルと同じく restart や再サインインのあとも使い、設定ファイルの `agent.effort` にも保存する（`null` はキーを消す）
 - モデルが対応しない段階（例: `max` 非対応のモデル）は SDK 側で丸められる。`agent.effort` は選んだ値のまま表示する
 
 ## 残量の表示
@@ -82,8 +82,8 @@ stopped（サーバー終了時）
 | `settingSources` | `[]` | ユーザーやプロジェクトの hooks・権限設定に振る舞いを左右されないようにする（認証には影響しない） |
 | `includePartialMessages` | `true` | |
 | `resume` | 保存してあるセッション ID | 再起動しても会話を続けられるようにする |
-| `model` | `--model` > `BACKCOURT_DUO_MODEL` > 設定ファイルの `agent.model`（UI で切り替えた後はその値） | 指定がなければ Claude Code の既定モデル |
-| `effort` | `--effort` > `BACKCOURT_DUO_EFFORT` > 設定ファイルの `agent.effort`（UI で切り替えた後はその値） | 指定がなければモデルの既定 |
+| `model` | `--model` > `BACKCOURT_DUO_MODEL` > 設定ファイルの `agent.model`（UI で切り替えるとここに保存される） | 指定がなければ Claude Code の既定モデル |
+| `effort` | `--effort` > `BACKCOURT_DUO_EFFORT` > 設定ファイルの `agent.effort`（UI で切り替えるとここに保存される） | 指定がなければモデルの既定 |
 | `env` | agent-claude-code.md / agent-api-key.md の規則で作った値 | |
 | `pathToClaudeCodeExecutable` | agent-claude-code.md の規則で選んだ値 | |
 
@@ -122,6 +122,10 @@ store の `language`（specs/commands/start.md#言語）から、システムプ
 resume したときもシステムプロンプトは現在の設定で組み立て直す。さらに、前回の会話を始めたときの言語（状態ファイルに保存しておく）と
 今の設定が違えば、store の操作ログに「言語設定が変わった（`chat ja (config) · review en (--review-lang)`）。以降は Language 節に従う」を 1 行積む。
 次の人間メッセージの `<activity_since_last_turn>` で 1 度だけエージェントに届く（それまでの会話が別の言語で進んでいても、以降は新しい設定に従わせるため）。
+
+実行中に UI で言語を切り替えたとき（specs/commands/start.md#言語）は、走っているセッションのシステムプロンプトは変えられないので、
+store（`ReviewStore.setLanguage`）が操作ログに「言語設定が変わった（…）。システムプロンプトの Language 節の代わりにこれに従う」と新しい `## Language` 節の本文を積む。
+まだ届いていない以前の言語の通知は置き換えるので、次の人間メッセージで最新の設定が 1 度だけ届く。チャットにも `🌐 Language switched: …` のシステムメッセージを出す。restart / resume のときは現在の設定でシステムプロンプトを組み立て直す。
 
 ## 人間メッセージの包み方
 

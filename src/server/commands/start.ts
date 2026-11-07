@@ -8,7 +8,7 @@ import { GitError } from '../git.js';
 import { ReviewStore } from '../store.js';
 import { LocalSession, isLoopbackHost } from '../auth/local.js';
 import { resolveAuthMode } from '../auth/agent.js';
-import { loadLanguage, resolveEffort, resolveModel, type LanguageFlags } from '../config.js';
+import { loadLanguage, resolveEffort, resolveModel, saveUserConfig, type LanguageFlags } from '../config.js';
 import type { EffortLevel } from '../../shared/types.js';
 import { describeLanguage } from '../../shared/language.js';
 import { AgentSession } from '../agent/session.js';
@@ -82,7 +82,7 @@ export async function startCommand(opts: StartOptions): Promise<number> {
 
   const webRoot = join(PACKAGE_ROOT, 'dist', 'web');
   if (!existsSync(join(webRoot, 'index.html'))) console.log(style.yellow(`   web UI not built at ${webRoot} — run \`pnpm build\``));
-  const app = createApp({ store, session, agent, github: ctx.github, authMode, webRoot });
+  const app = createApp({ store, session, agent, github: ctx.github, authMode, webRoot, saveSettings: saveUserConfig });
 
   const server = await new Promise<ReturnType<typeof serve> | null>((resolve) => {
     const s = serve({ fetch: app.fetch, port: opts.port, hostname: opts.host }, () => resolve(s));

@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createApp } from './http.js';
+import { createApp, type AppDeps } from './http.js';
+import type { SettingsPatch } from './config.js';
 import { LocalSession } from './auth/local.js';
 import { ReviewStore } from './store.js';
 import { parseUnifiedDiff } from './diff.js';
@@ -14,11 +15,11 @@ const DIFF = `diff --git a/a.ts b/a.ts
 +TWO
 `;
 
-function setup() {
+function setup(saveSettings?: AppDeps['saveSettings']) {
   const target = { base: 'origin/main', baseSha: 'b', head: 'HEAD', headSha: 'h', mergeBaseSha: 'm', uncommitted: false, branch: 'feat', repoRoot: '/r', repoName: 'r' };
   const store = new ReviewStore(target, parseUnifiedDiff(DIFF), null);
   const session = new LocalSession(1200);
-  const app = createApp({ store, session, agent: null, github: null, authMode: 'claude-code', webRoot: '/nonexistent' });
+  const app = createApp({ store, session, agent: null, github: null, authMode: 'claude-code', webRoot: '/nonexistent', ...(saveSettings ? { saveSettings } : {}) });
   return { app, store, session };
 }
 
@@ -83,6 +84,33 @@ test('switching the effort validates the level and needs a running agent', async
   assert.equal((await put({ effort: 'turbo' })).status, 400);
   assert.equal((await put({ effort: 'high' })).status, 409);
   assert.equal((await put({ effort: null })).status, 409);
+});
+
+test('switching the language applies it, even without an agent, and saves it', async () => {
+  const saved: SettingsPatch[] = [];
+  const ctx = setup(async (p) => void saved.push(p));
+  const put = (body: unknown) => send(ctx, 'PUT', '/api/language', body);
+  assert.equal((await put({ conversation: 'not a tag!', review: null })).status, 400);
+  assert.equal((await put({ conversation: 'zh-hans', review: null })).status, 200);
+  assert.deepEqual(ctx.store.language.conversation, { tag: 'zh-Hans', name: 'Simplified Chinese', source: 'ui' });
+  assert.equal(ctx.store.language.review?.source, 'chat');
+  // One side at a time: the other keeps its value; only the sent side is saved.
+  assert.equal((await put({ review: 'en' })).status, 200);
+  assert.equal((await put({ review: 'ja' })).status, 200);
+  assert.equal(ctx.store.language.conversation?.tag, 'zh-Hans');
+  assert.equal(ctx.store.language.review?.tag, 'ja');
+  assert.deepEqual(saved, [{ language: { conversation: 'zh-Hans', review: null } }, { language: { review: 'en' } }, { language: { review: 'ja' } }]);
+  // The agent gets one note with the latest settings, not one per switch.
+  const notes = ctx.store.drainActivity().filter((l) => l.startsWith('language settings changed'));
+  assert.equal(notes.length, 1);
+  assert.match(notes[0] ?? '', /review ja/);
+});
+
+test('a failed settings save is reported in the chat, not as an error', async () => {
+  const ctx = setup(() => Promise.reject(new Error('disk full')));
+  assert.equal((await send(ctx, 'PUT', '/api/language', { conversation: null, review: 'en' })).status, 200);
+  assert.equal(ctx.store.language.review?.tag, 'en');
+  assert.match(ctx.store.chat.at(-1)?.text ?? '', /disk full/);
 });
 
 test('submit posts one review to the PR and clears pending', async () => {

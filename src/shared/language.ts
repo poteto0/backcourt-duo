@@ -38,6 +38,15 @@ export function languageName(tag: string): string {
   }
 }
 
+export function languageSetting(tag: string, source: string): LanguageSetting {
+  return { tag, name: languageName(tag), source };
+}
+
+/** An unset review follows chat (source `chat`). */
+export function languageSettings(conversation: LanguageSetting | null, review: LanguageSetting | null): LanguageSettings {
+  return { conversation, review: review ?? (conversation && { ...conversation, source: 'chat' }) };
+}
+
 /** `chat ja (config) · review en (--review-lang)` — terminal, doctor and the UI's tooltip. */
 export function describeLanguage({ conversation: c, review: r }: LanguageSettings): string {
   return `chat ${c ? `${c.tag} (${c.source})` : 'auto (follows you)'} · review ${r ? `${r.tag} (${r.source})` : 'auto (PR language)'}`;

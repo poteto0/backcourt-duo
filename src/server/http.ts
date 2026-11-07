@@ -13,8 +13,9 @@ import { LoginBusyError } from './auth/claude-login.js';
 import { GitHubError, submitReview } from './github.js';
 import type { ResolvedGitHubAuth } from './auth/github.js';
 import type { AgentAuthMode, HelloEvent } from '../shared/types.js';
-import { CursorSchema, EffortSchema, PendingCreateSchema, ReviewEventSchema, ReviewStateSchema } from './schemas.js';
+import { CursorSchema, EffortSchema, LanguageTagSchema, PendingCreateSchema, ReviewEventSchema, ReviewStateSchema } from './schemas.js';
 import { VERSION } from './version.js';
+import type { SettingsPatch } from './config.js';
 
 export interface AppDeps {
   store: ReviewStore;
@@ -23,6 +24,8 @@ export interface AppDeps {
   github: ResolvedGitHubAuth | null;
   authMode: AgentAuthMode;
   webRoot: string;
+  /** Persists settings changed from the UI (the user config); absent = not persisted (tests). */
+  saveSettings?: (patch: SettingsPatch) => Promise<void>;
 }
 
 const MIME: Record<string, string> = {
@@ -79,6 +82,8 @@ export function createApp(deps: AppDeps): Hono {
     return c.json({ error: err.message }, 500);
   });
 
+  /** The switch already applied, so a failed save is only reported in the chat. */
+  const persist = (patch: SettingsPatch) => deps.saveSettings?.(patch).catch((err: Error) => void store.system(`⚠️ Could not save the setting: ${err.message}`));
   const body = async <T>(c: Context, schema: z.ZodType<T>): Promise<T> => schema.parse(await c.req.json());
 
   // ------------------------------------------------------------ read
@@ -117,12 +122,21 @@ export function createApp(deps: AppDeps): Hono {
     const { model } = await body(c, z.object({ model: z.string().min(1).max(200) }));
     if (!deps.agent?.running) return c.json({ error: 'the agent is not running' }, 409);
     await deps.agent.setModel(model);
+    await persist({ agent: { model } });
     return c.json({ ok: true });
   });
   app.put('/api/agent/effort', async (c) => {
     const { effort } = await body(c, z.object({ effort: EffortSchema.nullable() }));
     if (!deps.agent?.running) return c.json({ error: 'the agent is not running' }, 409);
     await deps.agent.setEffort(effort);
+    await persist({ agent: { effort } });
+    return c.json({ ok: true });
+  });
+  app.put('/api/language', async (c) => {
+    const tag = LanguageTagSchema.nullable().optional();
+    const patch = await body(c, z.object({ conversation: tag, review: tag }));
+    store.setLanguage(patch);
+    await persist({ language: patch });
     return c.json({ ok: true });
   });
   app.post('/api/agent/restart', async (c) => {
@@ -173,7 +187,7 @@ export function createApp(deps: AppDeps): Hono {
       const count = store.pending.length;
       const { url } = await submitReview(deps.github, owner, repo, pr.number, { event, body: reviewBody, comments: store.pending, commitId: pr.headSha });
       store.completeSubmission({ url, at: new Date().toISOString(), count, event });
-      store.appendChat(store.makeMessage('system', `🚀 Review submitted (${event}, ${count} comment${count === 1 ? '' : 's'}): ${url}`));
+      store.system(`🚀 Review submitted (${event}, ${count} comment${count === 1 ? '' : 's'}): ${url}`);
       return c.json({ ok: true, url });
     } catch (err) {
       if (err instanceof GitHubError) return c.json({ error: err.message, details: err.details }, err.status >= 400 && err.status < 500 ? 422 : 502);

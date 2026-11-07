@@ -214,7 +214,7 @@ export class AgentSession {
   // ------------------------------------------------------------------ message pump
 
   private system(text: string): void {
-    this.store.appendChat(this.store.makeMessage('system', text));
+    this.store.system(text);
   }
 
   /** One place that turns a failure into agent status. Typed SDK codes first; text only as a fallback. */

@@ -255,7 +255,7 @@ export interface ReviewStateSnapshot {
   github: GitHubContext;
   lastSubmission: Submission | null;
   recommendation: ReviewRecommendation | null;
-  /** Chat and review (GitHub) languages, fixed at startup (specs/commands/start.md#言語). */
+  /** Chat and review (GitHub) languages; resolved at startup, switchable from the UI (specs/commands/start.md#言語). */
   language: LanguageSettings;
   warnings: Warning[];
 }

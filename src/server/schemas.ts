@@ -1,5 +1,6 @@
 // Input schemas shared by the HTTP API (human) and the MCP tools (agent), so both validate the same shapes.
 import { z } from 'zod';
+import { canonicalLanguageTag, LANGUAGE_TAG_HINT } from '../shared/language.js';
 import { EFFORT_LEVELS, type AccountDisplay, type EffortLevel, type Phase, type Priority, type ReviewEvent, type ReviewState, type Side } from '../shared/types.js';
 
 export const SideSchema = z.enum(['LEFT', 'RIGHT']) satisfies z.ZodType<Side>;
@@ -8,6 +9,8 @@ export const ReviewEventSchema = z.enum(['COMMENT', 'APPROVE', 'REQUEST_CHANGES'
 export const PrioritySchema = z.enum(['high', 'medium', 'low']) satisfies z.ZodType<Priority>;
 export const AccountDisplaySchema = z.enum(['hide', 'mask', 'show']) satisfies z.ZodType<AccountDisplay>;
 export const EffortSchema = z.enum(EFFORT_LEVELS) satisfies z.ZodType<EffortLevel>;
+/** A BCP 47 tag, canonicalised (`zh-hans` → `zh-Hans`). */
+export const LanguageTagSchema = z.string().transform((raw, ctx) => canonicalLanguageTag(raw) ?? (ctx.addIssue(`"${raw}" is ${LANGUAGE_TAG_HINT}`), z.NEVER));
 export const AgentPhaseSchema = z.enum(['walkthrough', 'wrapup']) satisfies z.ZodType<Phase>;
 
 const line = z.number().int().positive();
