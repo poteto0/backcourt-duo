@@ -32,6 +32,7 @@ import type {
 import { commentRef, formatRef } from '../shared/types.js';
 import { describeLanguage, languageSetting, languageSettings, looksLikeOtherLanguage, type LanguageSettings } from '../shared/language.js';
 import { languageInstructions } from './agent/prompts.js';
+import { truncate } from '../shared/text.js';
 
 const LANGUAGE_NOTE = 'language settings changed';
 
@@ -488,6 +489,10 @@ export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] 
     this.emit('chat', JSON.stringify(e));
   }
 
+  get reviewedCount(): number {
+    return this.files.filter((f) => f.reviewState === 'reviewed').length;
+  }
+
   setAgentSessionId(id: string): void {
     if (this.agentSessionId === id) return;
     this.agentSessionId = id;
@@ -499,9 +504,4 @@ function requireText(s: string, what: string): string {
   const text = s.trim();
   if (!text) throw new StoreError(`${what} is empty`);
   return text;
-}
-
-function truncate(s: string, n: number): string {
-  const one = s.replace(/\s+/g, ' ');
-  return one.length > n ? `${one.slice(0, n - 1)}…` : one;
 }

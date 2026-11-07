@@ -1,6 +1,7 @@
 import type { ReviewStore } from '../store.js';
-import { formatRef } from '../../shared/types.js';
+import { commentRef, formatRef } from '../../shared/types.js';
 import type { LanguageSetting, LanguageSettings } from '../../shared/language.js';
+import { truncate } from '../../shared/text.js';
 
 const label = (l: LanguageSetting) => `${l.name} (${l.tag})`;
 
@@ -91,7 +92,7 @@ export function wrapHumanMessage(store: ReviewStore, text: string): string {
     lines.push('viewing: (overview, no file selected)');
   }
   lines.push(`follow_agent: ${store.followAgent ? 'on' : 'off'}`);
-  lines.push(`phase: ${store.phase}; pending comments: ${store.pending.length}; reviewed files: ${store.files.filter((f) => f.reviewState === 'reviewed').length}/${store.files.length}`);
+  lines.push(`phase: ${store.phase}; pending comments: ${store.pending.length}; reviewed files: ${store.reviewedCount}/${store.files.length}`);
   lines.push('</human_context>');
   const activity = store.drainActivity();
   if (activity.length) {
@@ -100,5 +101,33 @@ export function wrapHumanMessage(store: ReviewStore, text: string): string {
     lines.push('</activity_since_last_turn>');
   }
   lines.push('', text);
+  return lines.join('\n');
+}
+
+const HANDOFF_NEXT_FILES = 3;
+
+/**
+ * Opens the first turn after a context reset (specs/sessions/agent-session.md#コンテキストのリセット): a few lines
+ * built from the store, which keeps everything the dropped conversation did to the review. Phase and progress are
+ * left to the <human_context> that follows.
+ */
+export function handoffMessage(store: ReviewStore, reason: string): string {
+  const done = new Set(store.files.filter((f) => f.reviewState === 'reviewed').map((f) => f.path));
+  const next = (store.plan?.files ?? []).filter((f) => !done.has(f.path));
+  const at = store.presence.agent;
+  const lastAgent = store.chat.findLast((m) => m.role === 'agent' && m.text.trim());
+  const lines = [
+    '<handoff>',
+    `Your earlier conversation was cleared to save context (${reason}). The shared review state is intact and is the source of truth: use get_review_context / get_file_diff for details instead of redoing work it already reflects.`,
+  ];
+  if (at) lines.push(`your focus: ${formatRef(at)}`);
+  if (next.length) {
+    const shown = next.slice(0, HANDOFF_NEXT_FILES).map((f) => `${formatRef(f)} (${f.priority}: ${truncate(f.note, 80)})`);
+    lines.push(`next in plan: ${shown.join(', ')}${next.length > HANDOFF_NEXT_FILES ? ` (+${next.length - HANDOFF_NEXT_FILES} more)` : ''}`);
+  }
+  if (store.pending.length) lines.push(`pending comments: ${store.pending.map((c) => `${c.id} ${formatRef(commentRef(c))}`).join(', ')}`);
+  if (store.proposals.length) lines.push(`change proposals: ${store.proposals.map((p) => `${p.id} ${formatRef(p)}`).join(', ')}`);
+  if (lastAgent) lines.push(`your last message: "${truncate(lastAgent.text, 300)}"`);
+  lines.push('</handoff>');
   return lines.join('\n');
 }

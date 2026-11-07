@@ -1,17 +1,26 @@
-// AgentSession — one long-lived streaming-input query() per server (specs/sessions/agent-session.md)
+// AgentSession — one streaming-input query() at a time, renewed at file / phase boundaries (specs/sessions/agent-session.md)
 import { query, type ModelInfo, type Query, type SDKMessage, type SDKUserMessage, type Options } from '@anthropic-ai/claude-agent-sdk';
 import type { ReviewStore } from '../store.js';
 import { isSignInError, looksLikeAuthError, resolveAgentAuth, type ResolvedAgentAuth } from '../auth/agent.js';
 import { startClaudeLogin } from '../auth/claude-login.js';
 import { createDuoServer, createDuoTools, DUO_SERVER, shortToolName } from './tools.js';
-import { kickoffPrompt, reviewSystemPrompt, wrapHumanMessage } from './prompts.js';
-import { mergeRateLimit, TokenMeter } from './usage.js';
-import type { AgentAuthMode, AgentStatus, AgentUsage, ChatMessage, EffortLevel, ModelOption, Ref } from '../../shared/types.js';
+import { handoffMessage, kickoffPrompt, reviewSystemPrompt, wrapHumanMessage } from './prompts.js';
+import { compact, mergeRateLimit, TokenMeter } from './usage.js';
+import type { AgentAuthMode, AgentStatus, AgentUsage, ChatMessage, EffortLevel, ModelOption, Phase, Ref } from '../../shared/types.js';
 import { formatRef } from '../../shared/types.js';
 
 const READ_ONLY_TOOLS = ['Read', 'Grep', 'Glob'];
 const DENIED_TOOLS = ['Bash', 'Write', 'Edit', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Agent', 'Task'];
 const DEBUG = Boolean(process.env['BACKCOURT_DUO_DEBUG']);
+/** Kill switch for the context reset (specs/sessions/agent-session.md#コンテキストのリセット). */
+const CONTEXT_RESET = !/^(0|off|false)$/i.test(process.env['BACKCOURT_DUO_CONTEXT_RESET'] ?? '');
+/** Prompt size (input + cache read + cache write of the last request) at which the conversation is dropped. */
+const RESET_AT_TOKENS = 60_000;
+
+interface Progress {
+  phase: Phase;
+  reviewed: number;
+}
 
 /** Minimal async queue used as the streaming prompt. */
 class InputQueue implements AsyncIterable<SDKUserMessage> {
@@ -62,6 +71,18 @@ export class AgentSession {
   private model: string | undefined;
   /** Per-turn token log, only under BACKCOURT_DUO_DEBUG; one per query() since its totals are per query(). */
   private meter: TokenMeter | null = null;
+  /** Kept from start() so a context reset can open the next query() synchronously. */
+  private auth: ResolvedAgentAuth | null = null;
+  /** Review progress at the end of the previous turn: a change by the end of this one is a reset boundary. */
+  private progress: Progress = { phase: 'preparing', reviewed: 0 };
+  /** Prompt tokens of the latest request in this query(). */
+  private contextTokens = 0;
+  /** A message was pushed mid-turn, so the query() still owes a reply and must not be dropped yet. */
+  private sentMidTurn = false;
+  /** Set by a reset; the next human message opens with the handoff. */
+  private handoffReason: string | null = null;
+  /** Cost of the query() calls dropped by resets, so the meter keeps the session total. */
+  private costBase = 0;
 
   constructor(private readonly store: ReviewStore, private readonly opts: AgentSessionOptions) {
     this.model = opts.model;
@@ -87,10 +108,35 @@ export class AgentSession {
       return;
     }
 
+    this.auth = auth;
+    this.costBase = 0;
+    this.handoffReason = null;
+    const resume = this.store.agentSessionId;
+    if (!resume && !this.store.plan) this.store.setPhase('preparing');
+    const q = this.open(auth, gen, resume);
+    void q
+      .supportedModels()
+      .then((models) => {
+        if (gen !== this.generation) return;
+        this.store.setAgent({ models: models.map(toModelOption) });
+        this.publishModel(this.store.agent.model);
+      })
+      .catch(() => undefined);
+
+    if (resume) {
+      this.store.setAgentStatus('waiting');
+      this.system('🏀 Resumed the previous agent conversation.');
+    } else {
+      this.system('🏀 Agent is preparing the review…');
+      this.send(kickoffPrompt(this.store.language));
+    }
+  }
+
+  /** Open a query() for generation `gen`, resuming the conversation `resume` if given. */
+  private open(auth: ResolvedAgentAuth, gen: number, resume: string | null): Query {
     const input = new InputQueue();
     this.input = input;
     const tools = createDuoTools(this.store, (t) => this.system(t));
-    const resume = this.store.agentSessionId;
     const options: Options = {
       cwd: this.store.target.repoRoot,
       tools: READ_ONLY_TOOLS,
@@ -115,35 +161,26 @@ export class AgentSession {
     const q = query({ prompt: input, options });
     this.q = q;
     this.meter = DEBUG ? new TokenMeter() : null;
+    this.contextTokens = 0;
+    this.sentMidTurn = false;
+    this.progress = this.currentProgress();
     void this.pump(q, gen);
-    void q
-      .supportedModels()
-      .then((models) => {
-        if (gen !== this.generation) return;
-        this.store.setAgent({ models: models.map(toModelOption) });
-        this.publishModel(this.store.agent.model);
-      })
-      .catch(() => undefined);
-
-    if (resume) {
-      this.store.setAgentStatus('waiting');
-      this.system('🏀 Resumed the previous agent conversation.');
-    } else {
-      if (!this.store.plan) this.store.setPhase('preparing');
-      this.system('🏀 Agent is preparing the review…');
-      this.send(kickoffPrompt(this.store.language));
-    }
+    return q;
   }
 
-  /** Send a human message (wrapped with presence + activity). */
+  /** Send a human message (wrapped with presence + activity, and the handoff after a reset). */
   sendHuman(text: string): ChatMessage {
+    // Built before the message joins the chat, so "your last message" is the agent's.
+    const handoff = this.handoffReason ? `${handoffMessage(this.store, this.handoffReason)}\n\n` : '';
     const msg = this.store.appendChat(this.store.makeMessage('human', text));
-    this.send(wrapHumanMessage(this.store, text));
+    this.send(handoff + wrapHumanMessage(this.store, text));
+    this.handoffReason = null;
     return msg;
   }
 
   private send(text: string): void {
     if (!this.input) throw new Error('agent is not running');
+    if (this.store.agent.status === 'thinking') this.sentMidTurn = true;
     this.store.setAgentStatus('thinking');
     this.input.push({ type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null });
   }
@@ -199,11 +236,16 @@ export class AgentSession {
   }
 
   async stop(): Promise<void> {
-    this.generation++;
-    this.input?.close();
-    this.q?.close();
+    this.close();
     this.q = null;
     this.input = null;
+  }
+
+  /** Retire the current query(): later messages from it are ignored. Returns the new generation. */
+  private close(): number {
+    this.input?.close();
+    this.q?.close();
+    return ++this.generation;
   }
 
   async restart(): Promise<void> {
@@ -261,8 +303,50 @@ export class AgentSession {
     if (gen !== this.generation) return;
     this.setUsage({
       ...(c ? { context: { used: c.totalTokens, max: c.maxTokens } } : {}),
-      ...(this.opts.authMode === 'api-key' ? { costUSD: totalCostUSD } : {}),
+      ...this.costPatch(this.costBase + totalCostUSD),
     });
+  }
+
+  /** Cost is shown for API-key auth only (a subscription is not billed per call). */
+  private costPatch(costUSD: number): Partial<AgentUsage> {
+    return this.opts.authMode === 'api-key' ? { costUSD } : {};
+  }
+
+  private currentProgress(): Progress {
+    return { phase: this.store.phase, reviewed: this.store.reviewedCount };
+  }
+
+  /** Why the conversation should be dropped after a turn that moved the review from `was` to `now`, if it should. */
+  private resetReason(was: Progress, now: Progress): string | null {
+    if (now.phase !== was.phase) return `phase → ${now.phase}`;
+    if (now.reviewed > was.reviewed) return 'file reviewed';
+    if (this.contextTokens >= RESET_AT_TOKENS) return `context reached ${compact(this.contextTokens)} tokens`;
+    return null;
+  }
+
+  /** End-of-turn bookkeeping: drop the conversation at a boundary, or refresh the usage meter. */
+  private afterTurn(totalCostUSD: number): void {
+    // A message pushed mid-turn still owes its reply on this query(): keep the baseline so the next turn end re-checks.
+    const owed = this.sentMidTurn;
+    this.sentMidTurn = false;
+    let reason: string | null = null;
+    if (CONTEXT_RESET && !owed) {
+      const now = this.currentProgress();
+      reason = this.resetReason(this.progress, now);
+      this.progress = now;
+    }
+    if (!reason || !this.auth) {
+      void this.refreshUsage(totalCostUSD);
+      return;
+    }
+    // Close the query() and open a fresh one without `resume`; the store is the memory that carries over.
+    const gen = this.close();
+    this.costBase += totalCostUSD;
+    // The context fill belongs to the dropped query(); the cost and plan limits carry over.
+    this.setUsage({ context: undefined, ...this.costPatch(this.costBase) });
+    this.open(this.auth, gen, null);
+    this.handoffReason = reason;
+    this.system(`🧹 Agent context reset (${reason}); it continues from the shared review state.`);
   }
 
   private endTurn(): void {
@@ -275,10 +359,7 @@ export class AgentSession {
   private handle(m: SDKMessage): void {
     switch (m.type) {
       case 'system':
-        if (m.subtype === 'init') {
-          this.store.setAgentSessionId(m.session_id);
-          this.publishModel(m.model);
-        }
+        if (m.subtype === 'init') this.publishModel(m.model);
         return;
       case 'auth_status':
         if (m.error) this.fail({ code: 'authentication_failed', text: m.error, fatal: false });
@@ -306,6 +387,8 @@ export class AgentSession {
       }
       case 'assistant': {
         if (m.parent_tool_use_id) return;
+        const u = m.message.usage;
+        this.contextTokens = u.input_tokens + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
         const streamed = this.streamed.has(m.message.id);
         for (const block of m.message.content) {
           if (block.type === 'text' && !streamed && block.text.trim()) {
@@ -336,7 +419,9 @@ export class AgentSession {
       }
       case 'result': {
         this.endTurn();
-        void this.refreshUsage(m.total_cost_usd);
+        // Saved once a turn completes, not at init: a restart then never resumes a reset conversation that lacks the handoff.
+        this.store.setAgentSessionId(m.session_id);
+        this.afterTurn(m.total_cost_usd);
         if (m.subtype === 'success' && !m.is_error) {
           this.store.setAgentStatus('waiting');
           return;

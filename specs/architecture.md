@@ -60,7 +60,7 @@ store が変更されると `state` イベント（チャットを含まない�
 ### 永続化
 
 状態は `<git-dir>/backcourt-duo/<head-branch>.json` に保存する（pending、変更案、推奨案、reviewState、plan、チャットログ、エージェントのセッション ID）。
-`.git` の中に置くので誤ってコミットされない。同じブランチで再起動すると復元され、エージェントも SDK の `resume` で会話を引き継ぐ。
+`.git` の中に置くので誤ってコミットされない。同じブランチで再起動すると復元され、エージェントも SDK の `resume` で会話を引き継ぐ。エージェントの会話履歴はファイル／フェーズの区切りで捨て、store から作った引き継ぎメッセージで続ける（specs/sessions/agent-session.md#コンテキストのリセット）。
 `--fresh` を付けると破棄して最初から始める。Submit に成功したら pending と推奨案は空にする。
 
 ## Presence（「いまどこを読んでいるか」の共有）
