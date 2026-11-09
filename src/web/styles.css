@@ -63,7 +63,13 @@ a { color: var(--human); }
 
 /* ------------------------------------------------------------ layout */
 .app { display: flex; flex-direction: column; height: 100%; }
-.panes { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(220px, 300px) minmax(0, 1fr) minmax(340px, 440px); }
+.panes { --tree-col: minmax(220px, 300px); flex: 1; min-height: 0; display: grid; grid-template-columns: var(--tree-col) minmax(0, 1fr) 4px min(var(--chat-w), 70vw); }
+/* Maximized hides the diff (kept mounted); floating takes the chat out of the grid. */
+.panes.chat-maximized, .panes.chat-floating { grid-template-columns: var(--tree-col) minmax(0, 1fr); }
+.panes.chat-maximized > .diffpane, .panes:not(.chat-docked) > .splitter { display: none; }
+.splitter { cursor: col-resize; background: linear-gradient(var(--border), var(--border)) center / 1px 100% no-repeat; }
+.splitter:hover, .dragging .splitter { background: var(--accent); }
+body.dragging { user-select: none; }
 .pane-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); font-weight: 600; min-height: 48px; }
 
 /* ------------------------------------------------------------ buttons */
@@ -227,7 +233,11 @@ textarea:focus { outline: 2px solid var(--human); outline-offset: -1px; }
 .ref.missing { color: var(--fg-2); text-decoration: line-through; cursor: default; }
 
 /* ------------------------------------------------------------ chat */
-.chat { border-left: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; background: var(--bg); }
+.chat { display: flex; flex-direction: column; min-height: 0; background: var(--bg); }
+.chat.floating { position: fixed; z-index: 50; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45); }
+.chat.floating .pane-head { cursor: move; background: var(--bg-2); }
+.chat .layout-btns { display: flex; gap: 2px; }
+.chat .resize-grip { position: absolute; right: 0; bottom: 0; width: 14px; height: 14px; cursor: nwse-resize; background: linear-gradient(135deg, transparent 50%, var(--fg-2) 50%, transparent 60%, transparent 70%, var(--fg-2) 70%, transparent 80%); }
 .chat .agent-meta { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
 .chat .model-select { max-width: 11rem; font: inherit; font-size: 11px; color: var(--fg); background: var(--bg-3); border: 1px solid var(--border); border-radius: 6px; padding: 2px 4px; }
 .chat .agent-meta .sub { font-size: 11px; color: var(--fg-2); font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -291,6 +301,6 @@ textarea:focus { outline: 2px solid var(--human); outline-offset: -1px; }
 .done { text-align: center; padding: 20px; }
 
 @media (max-width: 1100px) {
-  .panes { grid-template-columns: 220px minmax(0, 1fr) 340px; }
+  .panes { --tree-col: 220px; }
   .phases { display: none; }
 }

@@ -4,6 +4,7 @@ import { api, ApiError } from '../api';
 import { renderMarkdown } from '../markdown';
 import { chat, composerInsert, hereRef, openFile, snap } from '../store';
 import { onRefClick } from './refs';
+import { chatMode, drag, floatRect, setChatMode, setFloatRect, type ChatMode } from '../layout';
 import { describeLanguage, languageName } from '../../shared/language';
 
 const STATUS_LABEL: Record<string, string> = {
@@ -73,8 +74,19 @@ export function ChatPanel() {
   };
 
   return (
-    <aside class="chat">
-      <div class="pane-head">
+    <aside
+      classList={{ chat: true, floating: chatMode() === 'floating' }}
+      style={chatMode() === 'floating' ? { left: `${floatRect().x}px`, top: `${floatRect().y}px`, width: `${floatRect().w}px`, height: `${floatRect().h}px` } : {}}
+    >
+      <div
+        class="pane-head"
+        onPointerDown={(e) => {
+          // The header is the floating window's title bar; leave its controls clickable.
+          if (chatMode() !== 'floating' || (e.target as Element).closest('button, select')) return;
+          const r0 = floatRect();
+          drag(e, (dx, dy) => setFloatRect({ ...r0, x: r0.x + dx, y: r0.y + dy }));
+        }}
+      >
         <span class="who agent big">🤖</span>
         <div class="agent-meta">
           <strong>Review agent</strong>
@@ -93,6 +105,7 @@ export function ChatPanel() {
           <span class="pulse" />
           {STATUS_LABEL[status()] ?? status()}
         </span>
+        <LayoutButtons />
       </div>
 
       <UsageMeter usage={s().agent.usage} />
@@ -186,7 +199,43 @@ export function ChatPanel() {
           </div>
         </div>
       </div>
+
+      <Show when={chatMode() === 'floating'}>
+        <div
+          class="resize-grip"
+          title="Drag to resize"
+          onPointerDown={(e) => {
+            const r0 = floatRect();
+            drag(e, (dx, dy) => setFloatRect({ ...r0, w: r0.w + dx, h: r0.h + dy }));
+          }}
+        />
+      </Show>
     </aside>
+  );
+}
+
+const LAYOUTS: { mode: ChatMode; icon: string; title: string }[] = [
+  { mode: 'maximized', icon: '⤢', title: 'Maximize the chat (hide the diff)' },
+  { mode: 'floating', icon: '⧉', title: 'Float the chat in a movable window' },
+];
+
+/** Toggles between the docked pane and the maximized / floating layouts. */
+function LayoutButtons() {
+  return (
+    <div class="layout-btns">
+      <For each={LAYOUTS}>
+        {(l) => (
+          <button
+            class="btn ghost xs"
+            classList={{ on: chatMode() === l.mode }}
+            title={chatMode() === l.mode ? 'Dock the chat back into its pane' : l.title}
+            onClick={() => setChatMode(chatMode() === l.mode ? 'docked' : l.mode)}
+          >
+            {chatMode() === l.mode ? '⇥' : l.icon}
+          </button>
+        )}
+      </For>
+    </div>
   );
 }
 
