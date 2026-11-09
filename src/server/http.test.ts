@@ -178,3 +178,14 @@ test('change proposals are shown, never applied, and can be staged as a suggesti
   assert.equal(store.proposals.length, 0);
   assert.equal((await app.request(`/api/proposals/${q.id}`, { method: 'DELETE', headers })).status, 400);
 });
+
+test('serves the new-side lines of a changed file for expanding context', async () => {
+  const target = { base: 'origin/main', baseSha: 'b', head: 'HEAD', headSha: 'h', mergeBaseSha: 'm', uncommitted: false, branch: 'feat', repoRoot: '/r', repoName: 'r' };
+  const store = new ReviewStore(target, parseUnifiedDiff(DIFF), null);
+  const session = new LocalSession(1200);
+  const app = createApp({ store, session, agent: null, github: null, authMode: 'claude-code', webRoot: '/x', readFileLines: async (p) => [`${p}:1`, 'TWO'] });
+  const auth = { ...host, Authorization: `Bearer ${session.token}` };
+  const ok = await app.request('/api/file?path=a.ts', { headers: auth });
+  assert.deepEqual(await ok.json(), { lines: ['a.ts:1', 'TWO'] });
+  assert.equal((await app.request('/api/file?path=..%2Fetc%2Fpasswd', { headers: auth })).status, 404);
+});

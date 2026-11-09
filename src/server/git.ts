@@ -1,4 +1,5 @@
-import { basename } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { basename, join } from 'node:path';
 import { run, which } from './exec.js';
 import { parseUnifiedDiff } from './diff.js';
 import type { DiffFile, ReviewTarget } from '../shared/types.js';
@@ -146,4 +147,11 @@ export async function loadDiff(target: ReviewTarget): Promise<DiffFile[]> {
   }
   files.sort((a, b) => a.path.localeCompare(b.path));
   return files;
+}
+
+/** The lines of a changed file on the new side (the working tree when uncommitted), for expanding collapsed context. */
+export async function readNewFileLines(target: ReviewTarget, path: string): Promise<string[]> {
+  // git() already drops the trailing newline; strip it from the working-tree read the same way.
+  const text = target.uncommitted ? (await readFile(join(target.repoRoot, path), 'utf8')).replace(/\n$/, '') : await git(target.repoRoot, ['show', `${target.headSha}:${path}`]);
+  return text.split('\n');
 }
