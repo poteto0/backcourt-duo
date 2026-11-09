@@ -5,31 +5,31 @@ import { createSignal } from 'solid-js';
  * (localStorage), never in the ReviewStore.
  */
 export type ChatMode = 'docked' | 'maximized' | 'floating';
-export type Rect = { x: number; y: number; w: number; h: number };
+type Rect = { x: number; y: number; w: number; h: number };
+type Saved = { mode: ChatMode; width: number; float: Rect };
 
 const KEY = 'backcourt-duo.layout';
 const MIN_W = 300;
 const MIN_H = 240;
+const MAX_W_RATIO = 0.7;
 
-type Saved = { mode: ChatMode; width: number; float: Rect };
-
-const DEFAULTS: Saved = { mode: 'docked', width: 400, float: { x: 0, y: 0, w: 480, h: 640 } };
+// A fresh floating window starts against the right edge.
+const DEFAULTS: Saved = { mode: 'docked', width: 400, float: { w: 480, h: 640, x: Math.max(0, window.innerWidth - 504), y: 64 } };
 
 function load(): Saved {
   try {
-    const raw = localStorage.getItem(KEY);
-    if (raw) return { ...DEFAULTS, ...(JSON.parse(raw) as Partial<Saved>) };
+    return { ...DEFAULTS, ...(JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Saved>) };
   } catch {
-    // Storage unavailable or corrupt: fall back to defaults.
+    return DEFAULTS; // storage unavailable or corrupt
   }
-  // Start a fresh floating window against the right edge.
-  return { ...DEFAULTS, float: { ...DEFAULTS.float, x: Math.max(0, window.innerWidth - DEFAULTS.float.w - 24), y: 64 } };
 }
 
 const initial = load();
 const [chatMode, setMode] = createSignal<ChatMode>(initial.mode);
 const [chatWidth, setWidth] = createSignal(initial.width);
-const [floatRect, setFloat] = createSignal<Rect>(initial.float);
+const [floatRect, setFloat] = createSignal<Rect>(initial.float, {
+  equals: (a, b) => a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h,
+});
 export { chatMode, chatWidth, floatRect };
 
 function save() {
@@ -47,36 +47,37 @@ export function setChatMode(mode: ChatMode) {
   save();
 }
 
+// The geometry setters run on every pointermove, so they only update signals; `drag` saves once on release.
 export function setChatWidth(px: number) {
-  setWidth(Math.round(clamp(px, MIN_W, window.innerWidth * 0.7)));
-  save();
+  setWidth(Math.round(clamp(px, MIN_W, window.innerWidth * MAX_W_RATIO)));
 }
 
-/** Keeps the floating window at least partly on screen and above its minimum size. */
+/** Keeps the floating window on screen and above its minimum size. */
 export function setFloatRect(r: Rect) {
   const w = clamp(r.w, MIN_W, window.innerWidth);
   const h = clamp(r.h, MIN_H, window.innerHeight);
   setFloat({ w, h, x: clamp(r.x, 0, window.innerWidth - w), y: clamp(r.y, 0, window.innerHeight - h) });
-  save();
 }
 
-/** Tracks a pointer drag from `e`, calling `move` with the offset from where it started. */
+/** Tracks a pointer drag from `e`, calling `move` with the offset from where it started, and saves the layout at the end. */
 export function drag(e: PointerEvent, move: (dx: number, dy: number) => void) {
   e.preventDefault();
   const x0 = e.clientX;
   const y0 = e.clientY;
-  const onMove = (ev: PointerEvent) => move(ev.clientX - x0, ev.clientY - y0);
-  const onUp = () => {
-    window.removeEventListener('pointermove', onMove);
-    window.removeEventListener('pointerup', onUp);
+  const stop = new AbortController();
+  const end = () => {
+    stop.abort();
     document.body.classList.remove('dragging');
+    save();
   };
   document.body.classList.add('dragging');
-  window.addEventListener('pointermove', onMove);
-  window.addEventListener('pointerup', onUp);
+  window.addEventListener('pointermove', (ev) => move(ev.clientX - x0, ev.clientY - y0), { signal: stop.signal });
+  window.addEventListener('pointerup', end, { signal: stop.signal });
+  window.addEventListener('pointercancel', end, { signal: stop.signal });
 }
 
-// Re-clamp after the browser window shrinks so the floating chat never ends up off screen.
+// Re-clamp after the browser window shrinks so the chat never outgrows or leaves the screen.
 window.addEventListener('resize', () => {
-  if (chatMode() === 'floating') setFloatRect(floatRect());
+  setChatWidth(chatWidth());
+  setFloatRect(floatRect());
 });

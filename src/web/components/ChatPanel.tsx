@@ -76,13 +76,13 @@ export function ChatPanel() {
   return (
     <aside
       classList={{ chat: true, floating: chatMode() === 'floating' }}
-      style={chatMode() === 'floating' ? { left: `${floatRect().x}px`, top: `${floatRect().y}px`, width: `${floatRect().w}px`, height: `${floatRect().h}px` } : {}}
+      style={(({ x, y, w, h }) => ({ '--fx': `${x}px`, '--fy': `${y}px`, '--fw': `${w}px`, '--fh': `${h}px` }))(floatRect())}
     >
       <div
         class="pane-head"
         onPointerDown={(e) => {
           // The header is the floating window's title bar; leave its controls clickable.
-          if (chatMode() !== 'floating' || (e.target as Element).closest('button, select')) return;
+          if (chatMode() !== 'floating' || (e.target as Element).closest('button, select, input, textarea, a')) return;
           const r0 = floatRect();
           drag(e, (dx, dy) => setFloatRect({ ...r0, x: r0.x + dx, y: r0.y + dy }));
         }}
@@ -222,18 +222,16 @@ const LAYOUTS: { mode: ChatMode; icon: string; title: string }[] = [
 /** Toggles between the docked pane and the maximized / floating layouts. */
 function LayoutButtons() {
   return (
-    <div class="layout-btns">
+    <div class="seg">
       <For each={LAYOUTS}>
-        {(l) => (
-          <button
-            class="btn ghost xs"
-            classList={{ on: chatMode() === l.mode }}
-            title={chatMode() === l.mode ? 'Dock the chat back into its pane' : l.title}
-            onClick={() => setChatMode(chatMode() === l.mode ? 'docked' : l.mode)}
-          >
-            {chatMode() === l.mode ? '⇥' : l.icon}
-          </button>
-        )}
+        {(l) => {
+          const on = () => chatMode() === l.mode;
+          return (
+            <button classList={{ on: on() }} title={on() ? 'Dock the chat back into its pane' : l.title} onClick={() => setChatMode(on() ? 'docked' : l.mode)}>
+              {on() ? '⇥' : l.icon}
+            </button>
+          );
+        }}
       </For>
     </div>
   );
