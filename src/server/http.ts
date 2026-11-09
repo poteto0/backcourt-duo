@@ -11,6 +11,7 @@ import { StoreError, type ReviewStore } from './store.js';
 import type { AgentSession } from './agent/session.js';
 import { LoginBusyError } from './auth/claude-login.js';
 import { GitHubError, submitReview } from './github.js';
+import { readNewFileLines } from './git.js';
 import type { ResolvedGitHubAuth } from './auth/github.js';
 import type { AgentAuthMode, HelloEvent } from '../shared/types.js';
 import { CursorSchema, EffortSchema, LanguageTagSchema, PendingCreateSchema, ReviewEventSchema, ReviewStateSchema } from './schemas.js';
@@ -26,6 +27,8 @@ export interface AppDeps {
   webRoot: string;
   /** Persists settings changed from the UI (the user config); absent = not persisted (tests). */
   saveSettings?: (patch: SettingsPatch) => Promise<void>;
+  /** New-side lines of a changed file; defaults to git (overridden in tests). */
+  readFileLines?: (path: string) => Promise<string[]>;
 }
 
 const MIME: Record<string, string> = {
@@ -90,6 +93,14 @@ export function createApp(deps: AppDeps): Hono {
   app.get('/api/state', (c) => c.json(store.snapshot()));
   app.get('/api/diff', (c) => c.json(store.diff));
   app.get('/api/chat', (c) => c.json(store.chat));
+  /** New-side lines of a changed file, so the UI can expand the context a diff collapses. */
+  app.get('/api/file', async (c) => {
+    const f = store.diffByPath.get(c.req.query('path') ?? '');
+    if (!f) return c.json({ error: 'not part of this diff' }, 404);
+    if (f.binary || f.status === 'deleted') return c.json({ lines: [] });
+    const read = deps.readFileLines ?? ((path: string) => readNewFileLines(store.target, path));
+    return c.json({ lines: await read(f.path) });
+  });
 
   app.get('/api/events', (c) =>
     streamSSE(c, async (stream) => {

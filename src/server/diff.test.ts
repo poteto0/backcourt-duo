@@ -4,6 +4,7 @@ import { isCommentable, isCommentableRange, parseUnifiedDiff, renderFileDiffForA
 import { parseRemoteUrl } from './git.js';
 import { buildReviewPayload, AGENT_FOOTER } from './github.js';
 import { parseRefs, formatRef } from '../shared/types.js';
+import { collapsedGaps, gapOf } from '../shared/gaps.js';
 import { ReviewStore } from './store.js';
 
 const SAMPLE = `diff --git a/src/a.ts b/src/a.ts
@@ -191,4 +192,26 @@ test('store validates pending locations and tracks presence/activity', () => {
   const plan = store.setPlan({ summary: 's', files: [{ path: 'gone.ts', priority: 'high', note: 'n' }] });
   assert.equal(plan.files.length, 4);
   assert.equal(store.phase, 'walkthrough');
+});
+
+test('collapsedGaps finds the unchanged lines around hunks, with old-side offsets', () => {
+  const [f] = parseUnifiedDiff(`diff --git a/g.ts b/g.ts
+--- a/g.ts
++++ b/g.ts
+@@ -4,2 +4,3 @@
+ four
++new
+ five
+@@ -20,2 +20,0 @@
+-twenty
+-twentyone
+`);
+  const gaps = collapsedGaps(f!.hunks, 30);
+  assert.deepEqual(gaps, [
+    { start: 1, end: 3, offset: 0 },
+    { start: 7, end: 20, offset: -1 },
+    { start: 21, end: 30, offset: 1 },
+  ]);
+  assert.equal(gapOf(gaps, 10), 1);
+  assert.equal(gapOf(gaps, 5), -1);
 });

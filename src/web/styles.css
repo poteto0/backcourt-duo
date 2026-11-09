@@ -168,6 +168,9 @@ table.diff col.c-ln { width: 52px; }
 table.diff td { padding: 0; vertical-align: top; }
 table.diff tr.hunk td { background: var(--hunk-bg); color: var(--fg-2); padding: 4px 12px; }
 tr.hunk .section { margin-left: 8px; }
+table.diff tr.hunk.expandable td { cursor: pointer; }
+table.diff tr.hunk.expandable:hover td { color: var(--fg); }
+tr.hunk .expand-icon { margin-right: 8px; color: var(--human); }
 table.diff td.ln { text-align: right; padding: 0 8px; color: var(--fg-2); cursor: pointer; user-select: none; border-right: 1px solid var(--border); }
 td.ln:hover { color: var(--fg); }
 tr.add td.code { background: var(--add-bg); }

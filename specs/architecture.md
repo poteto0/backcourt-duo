@@ -102,6 +102,7 @@ UI の操作:
 | GET | `/api/diff` | `DiffFile[]`（ハンクと行。old/new の行番号付き） |
 | GET | `/api/events` | SSE（`state`, `chat`, `hello`） |
 | GET | `/api/chat` | チャット履歴 |
+| GET | `/api/file?path=` | `{ lines }` diff に含まれるファイルの new 側の全行（uncommitted なら作業ツリー）。UI が折りたたまれた未変更行を展開するのに使う |
 | POST | `/api/chat` | `{ text }` 人間のメッセージ。presence と操作ログを添えてエージェントに送る |
 | POST | `/api/agent/interrupt` | 実行中のターンを中断する |
 | PUT | `/api/agent/model` | エージェントのモデルを切り替える（`{ model }`。specs/sessions/agent-session.md#モデルの切り替え） |

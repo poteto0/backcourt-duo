@@ -1,6 +1,7 @@
-import { createEffect, createMemo, createSignal, For, on, Show } from 'solid-js';
+import { createEffect, createMemo, createResource, createSignal, For, on, Show, type JSX } from 'solid-js';
 import type { ChangeProposal, DiffFile, DiffLine, PendingComment, Side } from '../../shared/types';
 import { commentRef, formatRef } from '../../shared/types';
+import { collapsedGaps, gapOf, type Gap } from '../../shared/gaps';
 import { api, ApiError } from '../api';
 import { renderMarkdown } from '../markdown';
 import { currentSelection, diff, hereRef, inOtherLanguage, insertIntoComposer, openFile, scrollRequest, setFollow, setSelection, snap, viewPath } from '../store';
@@ -29,6 +30,35 @@ export function DiffView() {
   const entry = createMemo(() => s().files.find((f) => f.path === viewPath()));
   const order = createMemo(() => (s().plan ? s().plan!.files.map((p) => p.path) : s().files.map((f) => f.path)));
   const [draft, setDraft] = createSignal<Draft | null>(null);
+  // Full new-side text of the viewed file, to expand the unchanged lines between hunks (the blue rows).
+  const [newLines] = createResource(
+    () => {
+      const f = file();
+      return f && !f.binary && f.status !== 'deleted' && f.hunks.length ? f.path : undefined;
+    },
+    (path) => api.fileLines(path).catch(() => []),
+  );
+  const gaps = createMemo<Gap[]>(() => {
+    const f = file();
+    const lines = newLines();
+    return f && lines?.length ? collapsedGaps(f.hunks, lines.length) : [];
+  });
+  /** Indices into gaps() the human has expanded. */
+  const [expanded, setExpanded] = createSignal<ReadonlySet<number>>(new Set());
+  const expand = (i: number) => setExpanded((prev) => new Set(prev).add(i));
+  const hiddenCount = (i: number) => {
+    const g = gaps()[i];
+    return g && !expanded().has(i) ? Math.max(0, g.end - g.start + 1) : 0;
+  };
+  const gapLines = (i: number): DiffLine[] => {
+    const g = gaps()[i];
+    const text = newLines() ?? [];
+    if (!g || !expanded().has(i)) return [];
+    return Array.from({ length: Math.max(0, g.end - g.start + 1) }, (_, j) => {
+      const n = g.start + j;
+      return { kind: 'context', oldLine: n + g.offset, newLine: n, text: text[n - 1] ?? '' };
+    });
+  };
   let scroller: HTMLDivElement | undefined;
 
   const agentCursor = () => {
@@ -79,6 +109,11 @@ export function DiffView() {
   createEffect(
     on(scrollRequest, (req) => {
       if (!req || req.path !== viewPath()) return;
+      // A reference into collapsed lines expands them so there is a row to scroll to.
+      if (req.line !== undefined && (req.side ?? 'RIGHT') === 'RIGHT') {
+        const i = gapOf(gaps(), req.line);
+        if (i >= 0) expand(i);
+      }
       requestAnimationFrame(() => {
         if (!scroller) return;
         if (req.line === undefined) {
@@ -90,7 +125,12 @@ export function DiffView() {
       });
     }),
   );
-  createEffect(on(viewPath, () => setDraft(null)));
+  createEffect(
+    on(viewPath, () => {
+      setDraft(null);
+      setExpanded(new Set<number>());
+    }),
+  );
 
   const clickLine = (k: LineKey, e: MouseEvent) => {
     const path = viewPath();
@@ -114,6 +154,47 @@ export function DiffView() {
   const go = (d: number) => {
     const next = order()[idx() + d];
     if (next) openFile(next);
+  };
+
+  /** One diff line plus its thread. Lines expanded from a collapsed gap are not in the diff, so they take no comments. */
+  const Row = (props: { l: DiffLine; commentable?: boolean }) => {
+    const l = props.l;
+    const k = keyOf(l);
+    return (
+      <>
+        <tr data-key={keyStr(k)} classList={{ line: true, [l.kind]: true, expanded: !props.commentable, sel: inSelection(k), agent: inAgentRange(k), proposed: inProposal(k) }}>
+          <td class="ln" onClick={(e) => clickLine(k, e)}>
+            {l.oldLine ?? ''}
+          </td>
+          <td class="ln" onClick={(e) => clickLine(k, e)}>
+            {l.newLine ?? ''}
+          </td>
+          <td class="code">
+            <Show when={props.commentable}>
+              <button class="add-comment" title="Add a comment (shift-click line numbers to select a range)" onClick={() => startComment(k)}>
+                +
+              </button>
+            </Show>
+            <span class="marker">{l.kind === 'add' ? '+' : l.kind === 'del' ? '-' : ' '}</span>
+            <span class="text">{l.text}</span>
+            <Show when={l.noNewline}>
+              <span class="nonl" title="No newline at end of file">⏎̸</span>
+            </Show>
+          </td>
+        </tr>
+        <Show when={props.commentable && (commentsAt(k).length || proposalsAt(k).length || (draft()?.side === k.side && draft()?.end === k.line))}>
+          <tr class="thread-row">
+            <td colspan="3">
+              <For each={proposalsAt(k)}>{(p) => <Proposal p={p} />}</For>
+              <For each={commentsAt(k)}>{(c) => <Comment c={c} />}</For>
+              <Show when={draft()?.side === k.side && draft()?.end === k.line}>
+                <CommentForm draft={draft()!} path={viewPath()!} onDone={() => setDraft(null)} />
+              </Show>
+            </td>
+          </tr>
+        </Show>
+      </>
+    );
   };
 
   return (
@@ -188,58 +269,23 @@ export function DiffView() {
                     </colgroup>
                     <tbody>
                       <For each={f().hunks}>
-                        {(h) => (
+                        {(h, i) => (
                           <>
-                            <tr class="hunk">
-                              <td colspan="3">
+                            <For each={gapLines(i())}>{(l) => <Row l={l} />}</For>
+                            <Show when={!expanded().has(i())}>
+                              <HunkRow count={hiddenCount(i())} onExpand={() => expand(i())}>
                                 <span>{h.header.replace(/ @@.*$/, ' @@')}</span>
                                 <span class="section">{h.section}</span>
-                              </td>
-                            </tr>
-                            <For each={h.lines}>
-                              {(l) => {
-                                const k = keyOf(l);
-                                return (
-                                  <>
-                                    <tr
-                                      data-key={keyStr(k)}
-                                      classList={{ line: true, [l.kind]: true, sel: inSelection(k), agent: inAgentRange(k), proposed: inProposal(k) }}
-                                    >
-                                      <td class="ln" onClick={(e) => clickLine(k, e)}>
-                                        {l.oldLine ?? ''}
-                                      </td>
-                                      <td class="ln" onClick={(e) => clickLine(k, e)}>
-                                        {l.newLine ?? ''}
-                                      </td>
-                                      <td class="code">
-                                        <button class="add-comment" title="Add a comment (shift-click line numbers to select a range)" onClick={() => startComment(k)}>
-                                          +
-                                        </button>
-                                        <span class="marker">{l.kind === 'add' ? '+' : l.kind === 'del' ? '-' : ' '}</span>
-                                        <span class="text">{l.text}</span>
-                                        <Show when={l.noNewline}>
-                                          <span class="nonl" title="No newline at end of file">⏎̸</span>
-                                        </Show>
-                                      </td>
-                                    </tr>
-                                    <Show when={commentsAt(k).length || proposalsAt(k).length || (draft()?.side === k.side && draft()?.end === k.line)}>
-                                      <tr class="thread-row">
-                                        <td colspan="3">
-                                          <For each={proposalsAt(k)}>{(p) => <Proposal p={p} />}</For>
-                                          <For each={commentsAt(k)}>{(c) => <Comment c={c} />}</For>
-                                          <Show when={draft()?.side === k.side && draft()?.end === k.line}>
-                                            <CommentForm draft={draft()!} path={f().path} onDone={() => setDraft(null)} />
-                                          </Show>
-                                        </td>
-                                      </tr>
-                                    </Show>
-                                  </>
-                                );
-                              }}
-                            </For>
+                              </HunkRow>
+                            </Show>
+                            <For each={h.lines}>{(l) => <Row l={l} commentable />}</For>
                           </>
                         )}
                       </For>
+                      <For each={gapLines(f().hunks.length)}>{(l) => <Row l={l} />}</For>
+                      <Show when={hiddenCount(f().hunks.length)}>
+                        <HunkRow count={hiddenCount(f().hunks.length)} onExpand={() => expand(f().hunks.length)} />
+                      </Show>
                     </tbody>
                   </table>
                 </Show>
@@ -249,6 +295,20 @@ export function DiffView() {
         )}
       </Show>
     </section>
+  );
+}
+
+/** A blue hunk/gap row; clicking it expands the unchanged lines it hides (when there are any). */
+function HunkRow(props: { count: number; onExpand: () => void; children?: JSX.Element }) {
+  return (
+    <tr classList={{ hunk: true, expandable: props.count > 0 }} onClick={() => props.count > 0 && props.onExpand()} title={props.count > 0 ? `Expand ${props.count} unchanged line${props.count === 1 ? '' : 's'}` : undefined}>
+      <td colspan="3">
+        <Show when={props.count > 0}>
+          <span class="expand-icon">↕</span>
+        </Show>
+        {props.children ?? <span>{props.count} more line{props.count === 1 ? '' : 's'}</span>}
+      </td>
+    </tr>
   );
 }
 

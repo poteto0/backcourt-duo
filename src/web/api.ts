@@ -27,6 +27,7 @@ export const api = {
   state: () => call<ReviewStateSnapshot>('GET', '/api/state'),
   diff: () => call<DiffFile[]>('GET', '/api/diff'),
   chat: () => call<ChatMessage[]>('GET', '/api/chat'),
+  fileLines: (path: string) => call<{ lines: string[] }>('GET', `/api/file?path=${encodeURIComponent(path)}`).then((r) => r.lines),
   send: (text: string) => call<ChatMessage>('POST', '/api/chat', { text }),
   interrupt: () => call<{ ok: true }>('POST', '/api/agent/interrupt'),
   setModel: (model: string) => call<{ ok: true }>('PUT', '/api/agent/model', { model }),
