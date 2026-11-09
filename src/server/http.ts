@@ -46,6 +46,7 @@ export function createApp(deps: AppDeps): Hono {
   const { store, session } = deps;
   const app = new Hono();
   const bootId = randomUUID();
+  const readFileLines = deps.readFileLines ?? ((path: string) => readNewFileLines(store.target, path));
 
   // --- DNS-rebinding guard (all routes)
   app.use('*', async (c, next) => {
@@ -98,8 +99,7 @@ export function createApp(deps: AppDeps): Hono {
     const f = store.diffByPath.get(c.req.query('path') ?? '');
     if (!f) return c.json({ error: 'not part of this diff' }, 404);
     if (f.binary || f.status === 'deleted') return c.json({ lines: [] });
-    const read = deps.readFileLines ?? ((path: string) => readNewFileLines(store.target, path));
-    return c.json({ lines: await read(f.path) });
+    return c.json({ lines: await readFileLines(f.path) });
   });
 
   app.get('/api/events', (c) =>

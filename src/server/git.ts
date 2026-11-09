@@ -151,6 +151,7 @@ export async function loadDiff(target: ReviewTarget): Promise<DiffFile[]> {
 
 /** The lines of a changed file on the new side (the working tree when uncommitted), for expanding collapsed context. */
 export async function readNewFileLines(target: ReviewTarget, path: string): Promise<string[]> {
-  const text = target.uncommitted ? await readFile(join(target.repoRoot, path), 'utf8') : await git(target.repoRoot, ['show', `${target.headSha}:${path}`]);
-  return text.replace(/\n$/, '').split('\n');
+  // git() already drops the trailing newline; strip it from the working-tree read the same way.
+  const text = target.uncommitted ? (await readFile(join(target.repoRoot, path), 'utf8')).replace(/\n$/, '') : await git(target.repoRoot, ['show', `${target.headSha}:${path}`]);
+  return text.split('\n');
 }

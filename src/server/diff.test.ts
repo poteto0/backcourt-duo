@@ -208,9 +208,9 @@ test('collapsedGaps finds the unchanged lines around hunks, with old-side offset
 `);
   const gaps = collapsedGaps(f!.hunks, 30);
   assert.deepEqual(gaps, [
-    { start: 1, end: 3, offset: 0 },
-    { start: 7, end: 20, offset: -1 },
-    { start: 21, end: 30, offset: 1 },
+    { start: 1, end: 3, size: 3, offset: 0 },
+    { start: 7, end: 20, size: 14, offset: -1 },
+    { start: 21, end: 30, size: 10, offset: 1 },
   ]);
   assert.equal(gapOf(gaps, 10), 1);
   assert.equal(gapOf(gaps, 5), -1);

@@ -36,7 +36,7 @@ export function DiffView() {
       const f = file();
       return f && !f.binary && f.status !== 'deleted' && f.hunks.length ? f.path : undefined;
     },
-    (path) => api.fileLines(path).catch(() => []),
+    fileLines,
   );
   const gaps = createMemo<Gap[]>(() => {
     const f = file();
@@ -46,19 +46,18 @@ export function DiffView() {
   /** Indices into gaps() the human has expanded. */
   const [expanded, setExpanded] = createSignal<ReadonlySet<number>>(new Set());
   const expand = (i: number) => setExpanded((prev) => new Set(prev).add(i));
-  const hiddenCount = (i: number) => {
-    const g = gaps()[i];
-    return g && !expanded().has(i) ? Math.max(0, g.end - g.start + 1) : 0;
-  };
-  const gapLines = (i: number): DiffLine[] => {
-    const g = gaps()[i];
+  const hiddenCount = (i: number) => (expanded().has(i) ? 0 : (gaps()[i]?.size ?? 0));
+  /** Rows of each gap, built once so expanding another gap does not re-create the expanded ones. */
+  const gapRows = createMemo(() => {
     const text = newLines() ?? [];
-    if (!g || !expanded().has(i)) return [];
-    return Array.from({ length: Math.max(0, g.end - g.start + 1) }, (_, j) => {
-      const n = g.start + j;
-      return { kind: 'context', oldLine: n + g.offset, newLine: n, text: text[n - 1] ?? '' };
-    });
-  };
+    return gaps().map((g) =>
+      Array.from({ length: g.size }, (_, j): DiffLine => {
+        const n = g.start + j;
+        return { kind: 'context', oldLine: n + g.offset, newLine: n, text: text[n - 1] ?? '' };
+      }),
+    );
+  });
+  const gapLines = (i: number): DiffLine[] => (expanded().has(i) ? (gapRows()[i] ?? []) : []);
   let scroller: HTMLDivElement | undefined;
 
   const agentCursor = () => {
@@ -105,15 +104,14 @@ export function DiffView() {
   });
   const inProposal = (k: LineKey) => k.side === 'RIGHT' && proposedLines().has(k.line);
 
-  // Scroll on navigation requests (human clicks, follow-agent).
+  // Scroll on navigation requests (human clicks, follow-agent). A reference into collapsed lines
+  // expands them so there is a row to scroll to — also once the file's text arrives after a jump.
   createEffect(
-    on(scrollRequest, (req) => {
+    on([scrollRequest, gaps], ([req, g], prev) => {
       if (!req || req.path !== viewPath()) return;
-      // A reference into collapsed lines expands them so there is a row to scroll to.
-      if (req.line !== undefined && (req.side ?? 'RIGHT') === 'RIGHT') {
-        const i = gapOf(gaps(), req.line);
-        if (i >= 0) expand(i);
-      }
+      const i = req.line !== undefined && (req.side ?? 'RIGHT') === 'RIGHT' ? gapOf(g, req.line) : -1;
+      if (i >= 0 && !expanded().has(i)) expand(i);
+      else if (prev?.[0] === req) return;
       requestAnimationFrame(() => {
         if (!scroller) return;
         if (req.line === undefined) {
@@ -162,7 +160,7 @@ export function DiffView() {
     const k = keyOf(l);
     return (
       <>
-        <tr data-key={keyStr(k)} classList={{ line: true, [l.kind]: true, expanded: !props.commentable, sel: inSelection(k), agent: inAgentRange(k), proposed: inProposal(k) }}>
+        <tr data-key={keyStr(k)} classList={{ line: true, [l.kind]: true, sel: inSelection(k), agent: inAgentRange(k), proposed: inProposal(k) }}>
           <td class="ln" onClick={(e) => clickLine(k, e)}>
             {l.oldLine ?? ''}
           </td>
@@ -284,7 +282,7 @@ export function DiffView() {
                       </For>
                       <For each={gapLines(f().hunks.length)}>{(l) => <Row l={l} />}</For>
                       <Show when={hiddenCount(f().hunks.length)}>
-                        <HunkRow count={hiddenCount(f().hunks.length)} onExpand={() => expand(f().hunks.length)} />
+                        {(n) => <HunkRow count={n()} onExpand={() => expand(f().hunks.length)} />}
                       </Show>
                     </tbody>
                   </table>
@@ -310,6 +308,20 @@ function HunkRow(props: { count: number; onExpand: () => void; children?: JSX.El
       </td>
     </tr>
   );
+}
+
+/** New-side lines per path; the diff is fixed for the server's lifetime (a restart reloads the page). */
+const fileLineCache = new Map<string, Promise<string[]>>();
+function fileLines(path: string): Promise<string[]> {
+  let p = fileLineCache.get(path);
+  if (!p) {
+    p = api.fileLines(path).catch(() => {
+      fileLineCache.delete(path);
+      return [];
+    });
+    fileLineCache.set(path, p);
+  }
+  return p;
 }
 
 function CommentForm(props: { draft: Draft; path: string; onDone: () => void }) {
