@@ -54,17 +54,32 @@ your focus: @src/b.ts#L10-L24
 next in plan: @src/c.ts (high: …), @src/d.ts (medium: …), @src/e.ts (low: …) (+4 more)
 pending comments: c_3 @src/a.ts#L8, c_5 @src/b.ts#L12-L14
 change proposals: p_4 @src/b.ts#L20
-your last message: "…（直前のエージェントの発言。300 文字まで）"
+<recent_conversation>
+The last exchanges before the reset, from the chat log. The human still sees them and may refer back to them (e.g. "the 2nd point").
+[human]
+…
+[you]
+気になる点は以下です。
+1. …
+2. …
+</recent_conversation>
 </handoff>
 
 <human_context>…（通常どおり）
 ```
 
 - 空の行（プランが無い、pending が無い など）は省く。phase と既読数は続く `<human_context>` に任せる
+- `<recent_conversation>` は store のチャットログから作る直近の会話（#46）。リセット直後に人間が「1 を積んで」のように
+  直前の発言を参照しても通じるようにするためのもの
+  - 直近 **5 往復**（人間のメッセージ 5 つと、それぞれへの返事）。最初の人間メッセージより前のエージェントの発言（準備フェーズの概要など）は、人間メッセージが 5 つ未満のときだけ入る
+  - 同じ話者の連続した行（ツール呼び出しをはさんで分かれたテキストなど）は 1 ターンにまとめる。tool と system の行は入れない
+  - 改行はそのまま残す（番号付きの論点リストを崩さない）
+  - 長さの上限: 最新のエージェントのターンは 4000 文字、それ以外のターンは 1200 文字、全体で 10000 文字。新しいターンから順に枠を使い、残りが 80 文字を切ったらそれより古いターンは入れない
+  - 上限を超えたエージェントのターンは先頭を削る（論点のリストや質問は末尾に来やすいため）。人間のターンは末尾を削る
 - 使用量の表示は、`context` を消し（古い `query()` の値なので）、`costUSD` はリセット前の分を足し続ける。`limits` はそのまま
 - サーバーの再起動による resume とは別物。resume は保存したセッション ID の会話（リセット後なら、引き継ぎ以降の短い会話）を続ける。
   リセット後に 1 ターンも終わらないうちに再起動したときは、リセット前の会話を resume する
-- 会話のニュアンス（「この設計は意図的と人間が言っていた」など）は store に無いので失われる。必要ならエージェントのメモ欄を足す（#24 の第 2 段階）
+- 5 往復より前の会話のニュアンス（「この設計は意図的と人間が言っていた」など）は失われる。長く持ち越したい論点は pending コメントにするか、エージェントのメモ欄を足す（#24 の第 2 段階）
 
 ## モデルの切り替え
 
