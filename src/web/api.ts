@@ -1,10 +1,13 @@
-import type { ChangeProposal, ChatEvent, ChatMessage, DiffFile, EffortLevel, HelloEvent, PendingComment, ReviewEvent, ReviewState, ReviewStateSnapshot, Side } from '../shared/types';
+import type { ChangeProposal, ChatEvent, ChatMessage, DiffFile, EffortLevel, HelloEvent, PendingComment, ReviewEvent, ReviewNote, ReviewState, ReviewStateSnapshot, Side } from '../shared/types';
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number, readonly details: string[] = []) {
     super(message);
   }
 }
+
+/** What to show for a failed call. */
+export const errorMessage = (err: unknown): string => (err instanceof ApiError ? err.message : String(err));
 
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
   const payload = body !== undefined ? JSON.stringify(body) : method === 'GET' ? undefined : '{}';
@@ -42,6 +45,9 @@ export const api = {
   deletePending: (id: string) => call<PendingComment>('DELETE', `/api/pending/${encodeURIComponent(id)}`),
   stageProposal: (id: string) => call<PendingComment>('POST', `/api/proposals/${encodeURIComponent(id)}/stage`),
   dismissProposal: (id: string) => call<ChangeProposal>('DELETE', `/api/proposals/${encodeURIComponent(id)}`),
+  addNote: (text: string) => call<ReviewNote>('POST', '/api/notes', { text }),
+  editNote: (id: string, patch: { text?: string; resolved?: boolean }) => call<ReviewNote>('PATCH', `/api/notes/${encodeURIComponent(id)}`, patch),
+  deleteNote: (id: string) => call<ReviewNote>('DELETE', `/api/notes/${encodeURIComponent(id)}`),
   submit: (event: ReviewEvent, body: string) => call<{ ok: true; url: string }>('POST', '/api/submit', { event, body }),
   claudeLogin: () => call<{ ok: true }>('POST', '/api/auth/claude/login'),
 };

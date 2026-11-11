@@ -25,7 +25,7 @@ stopped（サーバー終了時）
 状態の正は `ReviewStore` なので、会話履歴は区切りごとに捨て、store を記憶として引き継ぐ。
 
 - **捨てるもの**: `query()` の会話履歴
-- **残すもの**: `ReviewStore`（phase、プラン、既読、pending、変更案、presence、チャットログ）。新しい状態は作らない
+- **残すもの**: `ReviewStore`（phase、プラン、既読、pending、変更案、論点メモ、presence、チャットログ）
 
 ### トリガ
 
@@ -54,6 +54,10 @@ your focus: @src/b.ts#L10-L24
 next in plan: @src/c.ts (high: …), @src/d.ts (medium: …), @src/e.ts (low: …) (+4 more)
 pending comments: c_3 @src/a.ts#L8, c_5 @src/b.ts#L12-L14
 change proposals: p_4 @src/b.ts#L20
+<open_notes>
+n_6 (you) @src/b.ts#L30: 気になる点 1: retry に上限が無い
+n_7 (human): キャッシュの無効化は別 PR でやる予定（意図的）
+</open_notes>
 <recent_conversation>
 The last exchanges before the reset, from the chat log. The human still sees them and may refer back to them (e.g. "the 2nd point").
 [human]
@@ -79,7 +83,10 @@ The last exchanges before the reset, from the chat log. The human still sees the
 - 使用量の表示は、`context` を消し（古い `query()` の値なので）、`costUSD` はリセット前の分を足し続ける。`limits` はそのまま
 - サーバーの再起動による resume とは別物。resume は保存したセッション ID の会話（リセット後なら、引き継ぎ以降の短い会話）を続ける。
   リセット後に 1 ターンも終わらないうちに再起動したときは、リセット前の会話を resume する
-- 5 往復より前の会話のニュアンス（「この設計は意図的と人間が言っていた」など）は失われる。長く持ち越したい論点は pending コメントにするか、エージェントのメモ欄を足す（#24 の第 2 段階）
+- `<open_notes>` は未解決の論点メモ（specs/architecture.md#論点メモ）。全体で 6000 文字までで、新しいものから入れ、入りきらない古いものは
+  `(+N older open notes: see get_review_context)` と件数だけ書く。5 往復より前の会話は失われるので、
+  長く持ち越したい論点はメモに残す。システムプロンプトで、人間に判断を求める論点（番号付きリストなど）は 1 件ずつ `save_note` し、
+  人間の判断や意図も残し、決着したら `resolved` にするよう指示する
 
 ## モデルの切り替え
 
@@ -156,7 +163,7 @@ The last exchanges before the reset, from the chat log. The human still sees the
 
 | tool | 入力 | 効果 |
 |---|---|---|
-| `get_review_context` | `{ detail?: 'lean'\|'full', includeBodies? }` | target、PR（タイトルと本文）、プラン（`summary` と読む順番。各ファイルの `priority` / `note` はプラン側にだけ載せる）、ファイル一覧（統計、reviewState、lockfile / 生成物なら `skipped: 'lockfile'\|'generated'`）、pending、変更案、推奨 verdict、presence、phase、warnings。デフォルトの `lean` では PR 本文を 1500 文字で切り、pending は `{ id, path, side, line, startLine, author }`、推奨 verdict は `{ event }` だけ返し（本文は `includeBodies: true` のときだけ）、`language` は省く（システムプロンプトにあるため）。`full` では PR 本文を 6000 文字まで、本文と `language` も返す。どちらでも入れ子も含めて空配列・空オブジェクト・空文字列・`false`・`null`・未設定のフィールドは省く（warnings が無ければ `warnings` ごと省く） |
+| `get_review_context` | `{ detail?: 'lean'\|'full', includeBodies? }` | target、PR（タイトルと本文）、プラン（`summary` と読む順番。各ファイルの `priority` / `note` はプラン側にだけ載せる）、ファイル一覧（統計、reviewState、lockfile / 生成物なら `skipped: 'lockfile'\|'generated'`）、pending、変更案、未解決の論点メモ（lean では本文を 120 文字で切る。`includeBodies` / `full` で全文、`full` では解決済みも）、推奨 verdict、presence、phase、warnings。デフォルトの `lean` では PR 本文を 1500 文字で切り、pending は `{ id, path, side, line, startLine, author }`、推奨 verdict は `{ event }` だけ返し（本文は `includeBodies: true` のときだけ）、`language` は省く（システムプロンプトにあるため）。`full` では PR 本文を 6000 文字まで、本文と `language` も返す。どちらでも入れ子も含めて空配列・空オブジェクト・空文字列・`false`・`null`・未設定のフィールドは省く（warnings が無ければ `warnings` ごと省く） |
 | `get_file_diff` | `{ path, offset?, force? }` | そのファイルの diff をテキストで返す。追加行と文脈行には新しい行番号 `R<new>`、削除行には古い行番号 `L<old>` を付ける。コメントできる行かどうかもこれで判断できる。1 回で返すのは diff 600 行までで、切り詰めたときは末尾に続きの `offset`（読み飛ばす diff 行数）を示す。1 行は 300 文字で切る。lockfile（`pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`, `Cargo.lock`, `go.sum`, `poetry.lock`, `Gemfile.lock`）と生成物（`dist/` `build/` `vendor/` 配下、`*.min.js`, `*.min.css`, `*.map`, `*.snap`。ディレクトリはどの階層でもよい）は本文を返さず、`(skipped: lockfile — 1,234 changed lines. Pass force: true to read it.)` の 1 行だけを返す。`force: true` なら通常どおり返す |
 | `set_review_plan` | `{ summary, files: [{ path, priority: 'high'\|'medium'\|'low', note }] }` | プランを登録し、phase を `walkthrough` にする |
 | `focus` | `{ path, startLine?, endLine?, side?, note? }` | エージェントのカーソルを動かし、そのファイルを `in-progress` にする |
@@ -165,6 +172,9 @@ The last exchanges before the reset, from the chat log. The human still sees the
 | `update_pending_comment` / `delete_pending_comment` | `{ id, body? }` | 人間が書いたコメントも変更できるが、その操作はチャットに通知する |
 | `propose_change` | `{ path, startLine, endLine?, replacement, note }` | 変更案を diff 上にインライン表示する（RIGHT の行番号、1 ハンク内）。ファイルは変更しない。人間が suggestion として pending に積むか却下する |
 | `withdraw_proposal` | `{ id }` | 自分の変更案を取り下げる |
+| `save_note` | `{ text, path?, startLine?, endLine? }` | 論点メモを追加する（author は agent。本文は 500 文字まで）。未解決が 30 件あるとエラー |
+| `update_note` | `{ id, text?, resolved? }` | 論点メモを編集・解決する。人間が書いたメモの本文を変えたときはチャットに通知する |
+| `delete_note` | `{ id }` | 論点メモを消す（間違い・重複のとき。決着したものは `resolved` にする）。人間が書いたメモならチャットに通知する |
 | `mark_file_reviewed` | `{ path }` | `reviewed` にする |
 | `recommend_review` | `{ event: 'COMMENT'\|'APPROVE'\|'REQUEST_CHANGES', body }` | wrapup で推奨 verdict と総評を store の `recommendation` に登録する（再度呼ぶと上書き）。Submit ダイアログの初期値になる。投稿はしない |
 | `set_phase` | `{ phase: 'walkthrough'\|'wrapup' }` | |

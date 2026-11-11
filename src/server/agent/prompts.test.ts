@@ -73,3 +73,23 @@ test('recent conversation clips long turns, keeping the end of agent turns and m
   assert.ok(agent?.startsWith('[you]\n…'));
   assert.ok(agent?.endsWith('\n1. foo'));
 });
+
+test('handoff re-injects open notes and leaves resolved ones out', () => {
+  const store = setup();
+  const kept = store.addNote({ text: '気になる点 1: retry の上限が無い', path: 'a.ts', startLine: 2, author: 'agent' });
+  const done = store.addNote({ text: 'tests are skipped on purpose', author: 'human' });
+  store.updateNote(done.id, { resolved: true }, 'agent');
+
+  const text = handoffMessage(store, 'file reviewed');
+  assert.match(text, new RegExp(`<open_notes>\\n${kept.id} \\(you\\) @a\\.ts#L2: 気になる点 1: retry の上限が無い\\n</open_notes>`));
+  assert.doesNotMatch(text, /skipped on purpose/);
+});
+
+test('handoff keeps the newest open notes within its budget and counts the rest', () => {
+  const store = setup();
+  const notes = Array.from({ length: 20 }, (_, i) => store.addNote({ text: `${i} ${'x'.repeat(480)}`, author: 'agent' }));
+  const text = handoffMessage(store, 'phase → wrapup');
+  assert.match(text, /<open_notes>\n\(\+9 older open notes: see get_review_context\)\n/);
+  assert.ok(text.includes(notes.at(-1)!.id));
+  assert.ok(!text.includes(`${notes[8]!.id} `));
+});

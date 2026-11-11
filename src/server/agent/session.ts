@@ -8,6 +8,7 @@ import { handoffMessage, kickoffPrompt, reviewSystemPrompt, wrapHumanMessage } f
 import { compact, mergeRateLimit, TokenMeter } from './usage.js';
 import type { AgentAuthMode, AgentStatus, AgentUsage, ChatMessage, EffortLevel, ModelOption, Phase, Ref } from '../../shared/types.js';
 import { formatRef } from '../../shared/types.js';
+import { truncate } from '../../shared/text.js';
 
 const READ_ONLY_TOOLS = ['Read', 'Grep', 'Glob'];
 const DENIED_TOOLS = ['Bash', 'Write', 'Edit', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Agent', 'Task'];
@@ -467,6 +468,9 @@ function describeTool(name: string, input: Record<string, unknown>, root: string
     delete_pending_comment: () => `🗑️ deleted pending ${str(input['id']) ?? ''}`,
     propose_change: () => `💡 proposed a change on ${at}`,
     withdraw_proposal: () => `↩️ withdrew proposal ${str(input['id']) ?? ''}`,
+    save_note: () => `📝 noted${at ? ` on ${at}` : ''}: ${truncate(str(input['text']) ?? '', 80)}`,
+    update_note: () => `📝 ${input['resolved'] === true ? 'resolved' : input['resolved'] === false ? 'reopened' : 'edited'} note ${str(input['id']) ?? ''}`,
+    delete_note: () => `🗑️ deleted note ${str(input['id']) ?? ''}`,
     mark_file_reviewed: () => `✅ marked ${at} reviewed`,
     set_phase: () => `🏁 phase → ${str(input['phase']) ?? ''}`,
     Read: () => `📖 Read ${(str(input['file_path']) ?? '').replace(`${root}/`, '')}`,

@@ -117,6 +117,21 @@ export interface ChangeProposal {
   createdAt: string;
 }
 
+/**
+ * A discussion point or memo that outlives the agent conversation (specs/architecture.md#論点メモ): concerns raised,
+ * the human's decisions ("X is intentional"), things to compare later. Either side can write, edit and resolve it.
+ */
+export interface ReviewNote {
+  id: string;
+  text: string;
+  /** Location the note is about, if any. */
+  ref?: Ref | undefined;
+  author: Actor;
+  resolved: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface PullRequestInfo {
   number: number;
   url: string;
@@ -251,6 +266,7 @@ export interface ReviewStateSnapshot {
   followAgent: boolean;
   pending: PendingComment[];
   proposals: ChangeProposal[];
+  notes: ReviewNote[];
   agent: AgentInfo;
   github: GitHubContext;
   lastSubmission: Submission | null;

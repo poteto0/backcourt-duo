@@ -189,3 +189,18 @@ test('serves the new-side lines of a changed file for expanding context', async 
   assert.deepEqual(await ok.json(), { lines: ['a.ts:1', 'TWO'] });
   assert.equal((await app.request('/api/file?path=..%2Fetc%2Fpasswd', { headers: auth })).status, 404);
 });
+
+test('the human can add, edit, resolve and delete notes, and the agent hears about it', async () => {
+  const { app, session, store } = setup();
+  const headers = { ...host, Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json', Origin: 'http://localhost:1200' };
+  const created = await app.request('/api/notes', { method: 'POST', headers, body: JSON.stringify({ text: 'X is intentional' }) });
+  assert.equal(created.status, 200);
+  const { id } = (await created.json()) as { id: string };
+  assert.equal(store.notes[0]?.author, 'human');
+  assert.equal((await app.request(`/api/notes/${id}`, { method: 'PATCH', headers, body: JSON.stringify({ resolved: true }) })).status, 200);
+  assert.equal(store.notes[0]?.resolved, true);
+  assert.equal((await app.request(`/api/notes/${id}`, { method: 'PATCH', headers, body: JSON.stringify({ text: '' }) })).status, 400);
+  assert.equal((await app.request(`/api/notes/${id}`, { method: 'DELETE', headers })).status, 200);
+  assert.equal(store.notes.length, 0);
+  assert.deepEqual(store.drainActivity(), [`added note ${id}: "X is intentional"`, `resolved note ${id}`, `deleted note ${id}: "X is intentional"`]);
+});

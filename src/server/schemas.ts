@@ -31,5 +31,21 @@ export const pendingShape = {
   body: z.string().min(1).describe('Markdown, written for the PR author'),
 };
 
+/** Notes are re-sent whole after every context reset, so they are short by contract (specs/architecture.md#論点メモ). */
+export const NOTE_MAX_CHARS = 500;
+const noteText = z.string().min(1).max(NOTE_MAX_CHARS).describe('one point, self-contained: it is read later without the conversation around it');
+
+/** A note (論点メモ): text plus an optional location. */
+export const noteShape = {
+  text: noteText,
+  path: z.string().optional().describe('file the note is about'),
+  startLine: line.optional(),
+  endLine: line.optional(),
+};
+
+export const noteUpdateShape = { text: noteText.optional(), resolved: z.boolean().optional().describe('true once settled') };
+
 export const CursorSchema = z.object(cursorShape);
+export const NoteCreateSchema = z.object(noteShape);
+export const NoteUpdateSchema = z.object(noteUpdateShape);
 export const PendingCreateSchema = z.object(pendingShape);

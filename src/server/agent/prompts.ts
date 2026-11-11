@@ -1,5 +1,5 @@
 import type { ReviewStore } from '../store.js';
-import { commentRef, formatRef, type ChatMessage } from '../../shared/types.js';
+import { commentRef, formatRef, type ChatMessage, type ReviewNote } from '../../shared/types.js';
 import type { LanguageSetting, LanguageSettings } from '../../shared/language.js';
 import { clip, truncate } from '../../shared/text.js';
 
@@ -63,6 +63,12 @@ You run the point (you prepare, set the reading order, walk the files); the huma
   it as an inline diff under those lines. It changes no file. The human decides whether to stage it as a GitHub
   suggestion or dismiss it — do not stage the same fix again with add_pending_comment, and do not paste the
   replacement in chat.
+- Your conversation is cleared now and then (after a file is reviewed, at phase changes, when it grows long). What
+  carries over: the shared review state, your notes, and the last few chat exchanges. So keep the shared notes
+  (save_note / update_note) as your memory: when you raise concerns for the human to decide on (e.g. a numbered
+  list), save each one; save the human's decisions and stated intent ("X is intentional", "skip the tests"); resolve
+  a note once it is settled (staged, answered, dropped). One point per note, written so it makes sense on its own.
+  Notes the human wrote are theirs: do not rewrite them unless asked.
 
 ## Phases
 1. preparing — understand the change (get_review_context, get_file_diff, Read/Grep around it), then call
@@ -111,6 +117,8 @@ const HANDOFF_EXCHANGES = 5;
 const HANDOFF_LAST_CHARS = 4000;
 const HANDOFF_TURN_CHARS = 1200;
 const HANDOFF_TOTAL_CHARS = 10_000;
+/** Budget for the open notes (each at most NOTE_MAX_CHARS); newest first, the rest are counted and left to get_review_context. */
+const HANDOFF_NOTES_CHARS = 6000;
 /** Below this much budget an older turn would be a stub, so the carried conversation starts later instead. */
 const HANDOFF_MIN_CHARS = 80;
 
@@ -148,6 +156,22 @@ export function recentConversation(chat: readonly ChatMessage[]): string[] {
   return out;
 }
 
+/** One line per open note, oldest first, within HANDOFF_NOTES_CHARS (newest kept); the overflow is counted. */
+function openNotesBlock(open: readonly ReviewNote[]): string[] {
+  const out: string[] = [];
+  let left = HANDOFF_NOTES_CHARS;
+  let i = open.length - 1;
+  for (; i >= 0; i--) {
+    const n = open[i]!;
+    const line = `${n.id} (${n.author === 'agent' ? 'you' : 'human'})${n.ref ? ` ${formatRef(n.ref)}` : ''}: ${n.text}`;
+    if (line.length > left) break;
+    left -= line.length;
+    out.unshift(line);
+  }
+  if (i >= 0) out.unshift(`(+${i + 1} older open notes: see get_review_context)`);
+  return out;
+}
+
 /**
  * Opens the first turn after a context reset (specs/sessions/agent-session.md#コンテキストのリセット): a few lines
  * built from the store, which keeps everything the dropped conversation did to the review. Phase and progress are
@@ -169,6 +193,8 @@ export function handoffMessage(store: ReviewStore, reason: string): string {
   }
   if (store.pending.length) lines.push(`pending comments: ${store.pending.map((c) => `${c.id} ${formatRef(commentRef(c))}`).join(', ')}`);
   if (store.proposals.length) lines.push(`change proposals: ${store.proposals.map((p) => `${p.id} ${formatRef(p)}`).join(', ')}`);
+  const notes = openNotesBlock(store.openNotes);
+  if (notes.length) lines.push('<open_notes>', ...notes, '</open_notes>');
   if (conversation.length) {
     lines.push(
       '<recent_conversation>',

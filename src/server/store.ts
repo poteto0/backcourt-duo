@@ -24,6 +24,7 @@ import type {
   ReviewRecommendation,
   ReviewState,
   ReviewStateSnapshot,
+  ReviewNote,
   ReviewTarget,
   Side,
   Submission,
@@ -44,6 +45,7 @@ interface Persisted {
   mergeBaseSha: string;
   pending: PendingComment[];
   proposals?: ChangeProposal[];
+  notes?: ReviewNote[];
   reviewStates: Record<string, { state: ReviewState; by?: Actor }>;
   plan: ReviewPlan | null;
   phase: Phase;
@@ -59,6 +61,10 @@ export class StoreError extends Error {}
 
 const now = () => new Date().toISOString();
 
+/** Open notes are re-sent after every context reset, so the agent's are capped; resolved ones are trimmed oldest first. */
+export const MAX_OPEN_NOTES = 30;
+const MAX_RESOLVED_NOTES = 20;
+
 /** Events carry pre-serialised JSON so N SSE clients cost one JSON.stringify. */
 export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] }> {
   readonly diffByPath = new Map<string, DiffFile>();
@@ -70,6 +76,7 @@ export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] 
   followAgent = true;
   pending: PendingComment[] = [];
   proposals: ChangeProposal[] = [];
+  notes: ReviewNote[] = [];
   agent: AgentInfo = { status: 'starting', auth: null, loginInProgress: false, usage: { limits: [] } };
   github: GitHubContext = { auth: null, owner: null, repo: null };
   lastSubmission: Submission | null = null;
@@ -134,6 +141,7 @@ export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] 
       followAgent: this.followAgent,
       pending: this.pending,
       proposals: this.proposals,
+      notes: this.notes,
       agent: this.agent,
       github: this.github,
       lastSubmission: this.lastSubmission,
@@ -171,6 +179,8 @@ export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] 
     this.proposals = (data.proposals ?? []).filter(
       (p) => this.validateLocation(p.path, 'RIGHT', p.endLine, p.startLine) === null && rightLineTexts(this.diffByPath.get(p.path)!, p.startLine, p.endLine).join('\n') === p.original.join('\n'),
     );
+    // Notes are conversation memory, not line anchors: they survive a branch change as they are.
+    this.notes = data.notes ?? [];
     for (const f of this.files) {
       const rs = data.reviewStates[f.path];
       if (rs) {
@@ -214,6 +224,7 @@ export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] 
       mergeBaseSha: this.target.mergeBaseSha,
       pending: this.pending,
       proposals: this.proposals,
+      notes: this.notes,
       reviewStates: Object.fromEntries(
         this.files.filter((f) => f.reviewState !== 'unvisited').map((f) => [f.path, f.reviewedBy ? { state: f.reviewState, by: f.reviewedBy } : { state: f.reviewState }]),
       ),
@@ -429,6 +440,60 @@ export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] 
     return c;
   }
 
+  // ------------------------------------------------------------ notes (論点メモ)
+
+  get openNotes(): ReviewNote[] {
+    return this.notes.filter((n) => !n.resolved);
+  }
+
+  private requireNote(id: string): ReviewNote {
+    const n = this.notes.find((x) => x.id === id);
+    if (!n) throw new StoreError(`no note ${id}`);
+    return n;
+  }
+
+  addNote(input: { text: string; path?: string | undefined; startLine?: number | undefined; endLine?: number | undefined; author: Actor }): ReviewNote {
+    const text = requireText(input.text, 'note');
+    // Caps the agent's note-taking; the human's notes are never refused.
+    if (input.author === 'agent' && this.openNotes.length >= MAX_OPEN_NOTES) {
+      throw new StoreError(`${MAX_OPEN_NOTES} notes are open; resolve or delete some first`);
+    }
+    if (input.path !== undefined) this.requireFile(input.path);
+    const ref = input.path === undefined ? undefined : { path: input.path, startLine: input.startLine, endLine: input.endLine ?? input.startLine };
+    const at = now();
+    const n: ReviewNote = { id: `n_${++this.seq}_${randomUUID().slice(0, 6)}`, text, ref, author: input.author, resolved: false, createdAt: at, updatedAt: at };
+    this.notes = [...this.notes, n];
+    if (input.author === 'human') this.logActivity(`added note ${n.id}${ref ? ` on ${formatRef(ref)}` : ''}: "${truncate(text, 120)}"`);
+    this.changed();
+    return n;
+  }
+
+  updateNote(id: string, patch: { text?: string | undefined; resolved?: boolean | undefined }, by: Actor): ReviewNote {
+    const n = this.requireNote(id);
+    const next: ReviewNote = {
+      ...n,
+      ...(patch.text !== undefined ? { text: requireText(patch.text, 'note') } : {}),
+      ...(patch.resolved !== undefined ? { resolved: patch.resolved } : {}),
+      updatedAt: now(),
+    };
+    const notes = this.notes.map((x) => (x.id === id ? next : x));
+    this.notes = next.resolved && !n.resolved ? trimResolved(notes) : notes;
+    if (by === 'human') {
+      if (patch.text !== undefined) this.logActivity(`edited note ${id}: "${truncate(next.text, 120)}"`);
+      if (patch.resolved !== undefined && patch.resolved !== n.resolved) this.logActivity(`${patch.resolved ? 'resolved' : 'reopened'} note ${id}`);
+    }
+    this.changed();
+    return next;
+  }
+
+  deleteNote(id: string, by: Actor): ReviewNote {
+    const n = this.requireNote(id);
+    this.notes = this.notes.filter((x) => x.id !== id);
+    if (by === 'human') this.logActivity(`deleted note ${id}: "${truncate(n.text, 80)}"`);
+    this.changed();
+    return n;
+  }
+
   // ------------------------------------------------------------ recommendation / submit
 
   setRecommendation(input: ReviewRecommendation): void {
@@ -498,6 +563,14 @@ export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] 
     this.agentSessionId = id;
     this.scheduleSave();
   }
+}
+
+/** Resolved notes are history: keep only the latest MAX_RESOLVED_NOTES (by when they were resolved). */
+function trimResolved(notes: ReviewNote[]): ReviewNote[] {
+  const resolved = notes.filter((n) => n.resolved).sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
+  if (resolved.length <= MAX_RESOLVED_NOTES) return notes;
+  const drop = new Set(resolved.slice(0, resolved.length - MAX_RESOLVED_NOTES).map((n) => n.id));
+  return notes.filter((n) => !drop.has(n.id));
 }
 
 function requireText(s: string, what: string): string {
