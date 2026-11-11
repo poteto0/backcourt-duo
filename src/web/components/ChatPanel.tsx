@@ -1,9 +1,10 @@
 import { createEffect, createMemo, createSignal, For, Match, on, onCleanup, Show, Switch } from 'solid-js';
 import type { AgentUsage, ChatMessage, EffortLevel } from '../../shared/types';
-import { api, ApiError } from '../api';
+import { api, errorMessage } from '../api';
 import { renderMarkdown } from '../markdown';
 import { chat, composerInsert, hereRef, openFile, snap } from '../store';
 import { onRefClick } from './refs';
+import { NotesPanel } from './NotesPanel';
 import { chatMode, drag, floatRect, setChatMode, setFloatRect, type ChatMode } from '../layout';
 import { describeLanguage, languageName } from '../../shared/language';
 
@@ -69,7 +70,7 @@ export function ChatPanel() {
       if (override === undefined) setText('');
       stick = true;
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err));
+      setError(errorMessage(err));
     }
   };
 
@@ -115,6 +116,8 @@ export function ChatPanel() {
           <For each={s().warnings}>{(w) => <div class="warning">⚠️ {w.message}</div>}</For>
         </div>
       </Show>
+
+      <NotesPanel />
 
       <div
         class="messages"

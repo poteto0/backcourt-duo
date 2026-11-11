@@ -2,7 +2,7 @@ import { createEffect, createMemo, createResource, createSignal, For, on, Show, 
 import type { ChangeProposal, DiffFile, DiffLine, PendingComment, Side } from '../../shared/types';
 import { commentRef, formatRef } from '../../shared/types';
 import { collapsedGaps, gapOf, type Gap } from '../../shared/gaps';
-import { api, ApiError } from '../api';
+import { api, errorMessage } from '../api';
 import { renderMarkdown } from '../markdown';
 import { currentSelection, diff, hereRef, inOtherLanguage, insertIntoComposer, openFile, scrollRequest, setFollow, setSelection, snap, viewPath } from '../store';
 import { onRefClick } from './refs';
@@ -342,7 +342,7 @@ function CommentForm(props: { draft: Draft; path: string; onDone: () => void }) 
       });
       props.onDone();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -437,7 +437,7 @@ function Comment(props: { c: PendingComment }) {
 
 function Proposal(props: { p: ChangeProposal }) {
   const [error, setError] = createSignal<string | null>(null);
-  const act = (fn: () => Promise<unknown>) => () => fn().catch((err: unknown) => setError(err instanceof ApiError ? err.message : String(err)));
+  const act = (fn: () => Promise<unknown>) => () => fn().catch((err: unknown) => setError(errorMessage(err)));
   return (
     <div class="comment agent proposal">
       <div class="c-head">

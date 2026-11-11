@@ -3,7 +3,8 @@ import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { renderFileDiffForAgent, skippedKind } from '../diff.js';
 import { StoreError, type ReviewStore } from '../store.js';
-import { AgentPhaseSchema, cursorShape, pendingShape, PrioritySchema, ReviewEventSchema } from '../schemas.js';
+import { truncate } from '../../shared/text.js';
+import { AgentPhaseSchema, cursorShape, noteShape, noteUpdateShape, pendingShape, PrioritySchema, ReviewEventSchema } from '../schemas.js';
 
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
 
@@ -22,6 +23,7 @@ async function guard(fn: () => ToolResult | Promise<ToolResult>): Promise<ToolRe
 export const DUO_SERVER = 'duo';
 
 const LEAN_PR_BODY = 1500;
+const LEAN_NOTE = 120;
 const FULL_PR_BODY = 6000;
 
 /** Recursively drops null / undefined / false / '' / [] / {} so results carry no filler. */
@@ -52,6 +54,8 @@ export function reviewContext(store: ReviewStore, { detail = 'lean', includeBodi
     files: store.files.map((f) => ({ path: f.path, oldPath: f.oldPath, status: f.status, additions: f.additions, deletions: f.deletions, binary: f.binary, skipped: skippedKind(f.path), reviewState: f.reviewState })),
     pending: store.pending.map(({ id, path, side, line, startLine, author, body }) => ({ id, path, side, line, startLine, author, body: bodies && body })),
     proposals: store.proposals.map(({ id, path, startLine, endLine, note }) => ({ id, path, startLine, endLine, note })),
+    // Resolved notes are history: only with detail full. Open ones already came whole in the handoff, so lean clips them.
+    notes: (full ? store.notes : store.openNotes).map(({ id, text, ref, author, resolved }) => ({ id, text: bodies ? text : truncate(text, LEAN_NOTE), ref, author, resolved })),
     recommendation: recommendation && { event: recommendation.event, body: bodies && recommendation.body },
     language: full && store.language,
     presence: store.presence,
@@ -66,7 +70,7 @@ export function createDuoTools(store: ReviewStore, notify: (text: string) => voi
   return [
     tool(
       'get_review_context',
-      'Overview of the review: target refs, PR title/body, the review plan (summary, reading order, per-file notes), changed files (stats, review state; skipped = lockfile/generated, summarized by get_file_diff), pending comments and recommendation (bodies only with includeBodies), change proposals, presence and phase. Empty fields are omitted. detail "full" adds the whole PR body, comment bodies and the chat / review languages.',
+      'Overview of the review: target refs, PR title/body, the review plan (summary, reading order, per-file notes), changed files (stats, review state; skipped = lockfile/generated, summarized by get_file_diff), pending comments and recommendation (bodies only with includeBodies), change proposals, open notes (clipped unless includeBodies), presence and phase. Empty fields are omitted. detail "full" adds the whole PR body, comment and note bodies, resolved notes and the chat / review languages.',
       reviewContextShape,
       async (input) => guard(() => ok(reviewContext(store, input))),
     ),
@@ -166,6 +170,37 @@ export function createDuoTools(store: ReviewStore, notify: (text: string) => voi
       }),
     ),
 
+    tool(
+      'save_note',
+      'Save a discussion point or memo to the shared notes (the human sees and edits them in the UI). Notes survive the periodic clearing of your conversation; chat does not. Save: each concern you raise for the human to decide on, the human\'s decisions and stated intent ("X is intentional"), things to check or compare later.',
+      noteShape,
+      async (input) =>
+        guard(() => {
+          const n = store.addNote({ ...input, author: 'agent' });
+          return ok({ ok: true, id: n.id, openNotes: store.openNotes.length });
+        }),
+    ),
+
+    tool(
+      'update_note',
+      'Edit a note, or resolve it once it is settled (staged as a comment, answered, dropped). Resolve instead of deleting so the decision is kept.',
+      { id: z.string(), ...noteUpdateShape },
+      async ({ id, ...patch }) =>
+        guard(() => {
+          const n = store.updateNote(id, patch, 'agent');
+          if (n.author === 'human' && patch.text !== undefined) notify(`🤖 edited your note ${id}`);
+          return ok({ ok: true, id: n.id, resolved: n.resolved });
+        }),
+    ),
+
+    tool('delete_note', 'Remove a note that was wrong or a duplicate.', { id: z.string() }, async ({ id }) =>
+      guard(() => {
+        const n = store.deleteNote(id, 'agent');
+        if (n.author === 'human') notify(`🤖 deleted your note ${id}`);
+        return ok({ ok: true });
+      }),
+    ),
+
     tool('mark_file_reviewed', 'Mark a file as reviewed (the "Viewed" checkbox) once you and the human are done with it.', { path: z.string() }, async ({ path }) =>
       guard(() => {
         store.setReviewState(path, 'reviewed', 'agent');
@@ -198,7 +233,7 @@ export function createDuoServer(tools: ReturnType<typeof createDuoTools>) {
     name: DUO_SERVER,
     version: '1.0.0',
     alwaysLoad: true,
-    instructions: 'Tools that read and drive the shared backcourt-duo review state (diff, presence, plan, pending comments, change proposals).',
+    instructions: 'Tools that read and drive the shared backcourt-duo review state (diff, presence, plan, pending comments, change proposals, notes).',
     tools,
   });
 }

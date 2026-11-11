@@ -14,7 +14,7 @@ import { GitHubError, submitReview } from './github.js';
 import { readNewFileLines } from './git.js';
 import type { ResolvedGitHubAuth } from './auth/github.js';
 import type { AgentAuthMode, HelloEvent } from '../shared/types.js';
-import { CursorSchema, EffortSchema, LanguageTagSchema, PendingCreateSchema, ReviewEventSchema, ReviewStateSchema } from './schemas.js';
+import { CursorSchema, EffortSchema, LanguageTagSchema, NoteCreateSchema, NoteUpdateSchema, PendingCreateSchema, ReviewEventSchema, ReviewStateSchema } from './schemas.js';
 import { VERSION } from './version.js';
 import type { SettingsPatch } from './config.js';
 
@@ -186,6 +186,11 @@ export function createApp(deps: AppDeps): Hono {
   // ------------------------------------------------------------ change proposals
   app.post('/api/proposals/:id/stage', (c) => c.json(store.stageProposal(c.req.param('id'))));
   app.delete('/api/proposals/:id', (c) => c.json(store.removeProposal(c.req.param('id'), 'human')));
+
+  // ------------------------------------------------------------ notes
+  app.post('/api/notes', async (c) => c.json(store.addNote({ ...(await body(c, NoteCreateSchema)), author: 'human' })));
+  app.patch('/api/notes/:id', async (c) => c.json(store.updateNote(c.req.param('id'), await body(c, NoteUpdateSchema), 'human')));
+  app.delete('/api/notes/:id', (c) => c.json(store.deleteNote(c.req.param('id'), 'human')));
 
   // ------------------------------------------------------------ submit
   app.post('/api/submit', async (c) => {

@@ -1,7 +1,7 @@
 import type { ReviewStore } from '../store.js';
-import { commentRef, formatRef } from '../../shared/types.js';
+import { commentRef, formatRef, type ChatMessage, type ReviewNote } from '../../shared/types.js';
 import type { LanguageSetting, LanguageSettings } from '../../shared/language.js';
-import { truncate } from '../../shared/text.js';
+import { clip, truncate } from '../../shared/text.js';
 
 const label = (l: LanguageSetting) => `${l.name} (${l.tag})`;
 
@@ -63,6 +63,12 @@ You run the point (you prepare, set the reading order, walk the files); the huma
   it as an inline diff under those lines. It changes no file. The human decides whether to stage it as a GitHub
   suggestion or dismiss it — do not stage the same fix again with add_pending_comment, and do not paste the
   replacement in chat.
+- Your conversation is cleared now and then (after a file is reviewed, at phase changes, when it grows long). What
+  carries over: the shared review state, your notes, and the last few chat exchanges. So keep the shared notes
+  (save_note / update_note) as your memory: when you raise concerns for the human to decide on (e.g. a numbered
+  list), save each one; save the human's decisions and stated intent ("X is intentional", "skip the tests"); resolve
+  a note once it is settled (staged, answered, dropped). One point per note, written so it makes sense on its own.
+  Notes the human wrote are theirs: do not rewrite them unless asked.
 
 ## Phases
 1. preparing — understand the change (get_review_context, get_file_diff, Read/Grep around it), then call
@@ -105,6 +111,66 @@ export function wrapHumanMessage(store: ReviewStore, text: string): string {
 }
 
 const HANDOFF_NEXT_FILES = 3;
+/** Human messages (each with the replies that follow) carried over a reset. */
+const HANDOFF_EXCHANGES = 5;
+/** Character caps for the carried conversation: the latest agent turn (often a list the human answers by number), any other turn, all of it. */
+const HANDOFF_LAST_CHARS = 4000;
+const HANDOFF_TURN_CHARS = 1200;
+const HANDOFF_TOTAL_CHARS = 10_000;
+/** Budget for the open notes (each at most NOTE_MAX_CHARS); newest first, the rest are counted and left to get_review_context. */
+const HANDOFF_NOTES_CHARS = 6000;
+/** Below this much budget an older turn would be a stub, so the carried conversation starts later instead. */
+const HANDOFF_MIN_CHARS = 80;
+
+/**
+ * The last HANDOFF_EXCHANGES exchanges of the chat log, oldest first, with consecutive rows of one speaker merged
+ * into a turn. Tool and system rows are left out; line breaks are kept so numbered lists stay numbered.
+ */
+export function recentConversation(chat: readonly ChatMessage[]): string[] {
+  const turns: Array<{ role: 'human' | 'agent'; parts: string[] }> = [];
+  let humans = 0;
+  for (let i = chat.length - 1; i >= 0; i--) {
+    const m = chat[i]!;
+    const text = m.text.trim();
+    if ((m.role !== 'human' && m.role !== 'agent') || !text) continue;
+    const head = turns[0];
+    if (head?.role === m.role) {
+      head.parts.unshift(text);
+      continue;
+    }
+    // Stop once the oldest kept turn is the HANDOFF_EXCHANGES-th human message.
+    if (head?.role === 'human' && humans === HANDOFF_EXCHANGES) break;
+    if (m.role === 'human') humans++;
+    turns.unshift({ role: m.role, parts: [text] });
+  }
+  const out: string[] = [];
+  let left = HANDOFF_TOTAL_CHARS;
+  for (let i = turns.length - 1; i >= 0 && left >= HANDOFF_MIN_CHARS; i--) {
+    const { role, parts } = turns[i]!;
+    const cap = i === turns.length - 1 && role === 'agent' ? HANDOFF_LAST_CHARS : HANDOFF_TURN_CHARS;
+    // An agent turn usually ends with what the human answers (a question, a numbered list), so keep its end.
+    const text = clip(parts.join('\n\n'), Math.min(cap, left), role === 'agent' ? 'end' : 'start');
+    left -= text.length;
+    out.unshift(`[${role === 'agent' ? 'you' : 'human'}]\n${text}`);
+  }
+  return out;
+}
+
+/** One line per open note, oldest first, within HANDOFF_NOTES_CHARS (newest kept); the overflow is counted. */
+function openNotesBlock(open: readonly ReviewNote[]): string[] {
+  const out: string[] = [];
+  let left = HANDOFF_NOTES_CHARS;
+  let i = open.length - 1;
+  for (; i >= 0; i--) {
+    const n = open[i]!;
+    const line = `${n.id} (${n.author === 'agent' ? 'you' : 'human'})${n.ref ? ` ${formatRef(n.ref)}` : ''}: ${n.text}`;
+    if (line.length > left) break;
+    left -= line.length;
+    out.unshift(line);
+  }
+  if (i >= 0) out.unshift(`(+${i + 1} older open notes: see get_review_context)`);
+  return out;
+}
 
 /**
  * Opens the first turn after a context reset (specs/sessions/agent-session.md#コンテキストのリセット): a few lines
@@ -115,7 +181,7 @@ export function handoffMessage(store: ReviewStore, reason: string): string {
   const done = new Set(store.files.filter((f) => f.reviewState === 'reviewed').map((f) => f.path));
   const next = (store.plan?.files ?? []).filter((f) => !done.has(f.path));
   const at = store.presence.agent;
-  const lastAgent = store.chat.findLast((m) => m.role === 'agent' && m.text.trim());
+  const conversation = recentConversation(store.chat);
   const lines = [
     '<handoff>',
     `Your earlier conversation was cleared to save context (${reason}). The shared review state is intact and is the source of truth: use get_review_context / get_file_diff for details instead of redoing work it already reflects.`,
@@ -127,7 +193,16 @@ export function handoffMessage(store: ReviewStore, reason: string): string {
   }
   if (store.pending.length) lines.push(`pending comments: ${store.pending.map((c) => `${c.id} ${formatRef(commentRef(c))}`).join(', ')}`);
   if (store.proposals.length) lines.push(`change proposals: ${store.proposals.map((p) => `${p.id} ${formatRef(p)}`).join(', ')}`);
-  if (lastAgent) lines.push(`your last message: "${truncate(lastAgent.text, 300)}"`);
+  const notes = openNotesBlock(store.openNotes);
+  if (notes.length) lines.push('<open_notes>', ...notes, '</open_notes>');
+  if (conversation.length) {
+    lines.push(
+      '<recent_conversation>',
+      'The last exchanges before the reset, from the chat log. The human still sees them and may refer back to them (e.g. "the 2nd point").',
+      ...conversation,
+      '</recent_conversation>',
+    );
+  }
   lines.push('</handoff>');
   return lines.join('\n');
 }

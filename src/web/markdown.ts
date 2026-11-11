@@ -3,7 +3,7 @@ import { formatRef, parseRefs, type Ref } from '../shared/types';
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-function refChip(ref: Ref): string {
+export function refChip(ref: Ref): string {
   const data = `${ref.startLine !== undefined ? ` data-start="${ref.startLine}"` : ''}${ref.endLine !== undefined ? ` data-end="${ref.endLine}"` : ''}`;
   return `<button type="button" class="ref" data-path="${esc(ref.path)}"${data}>${esc(formatRef(ref).slice(1))}</button>`;
 }

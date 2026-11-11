@@ -24,6 +24,7 @@ interface ReviewState {
   followAgent: boolean;                // UI がエージェントのカーソルに追従するか
   pending: PendingComment[];
   proposals: ChangeProposal[];         // エージェントの変更案（表示のみ。ファイルには適用しない）
+  notes: ReviewNote[];                 // 論点メモ。エージェントの会話がリセットされても残る記憶
   agent: { status: 'starting' | 'thinking' | 'waiting' | 'error' | 'stopped' | 'signed-out'; auth: AgentAuthSummary; error?: string };
   github: { auth: GitHubAuthSummary };
   lastSubmission: { url: string; at: string; count: number } | null;
@@ -54,12 +55,25 @@ interface ReviewState {
     **Dismiss** を選ぶ。どちらの操作も人間の操作ログに入る
   - 永続化する。再起動時に `original` が現在の diff と一致しないものは捨てる
 
+### 論点メモ
+
+- `ReviewNote = { id, text, ref?, author: 'human'|'agent', resolved, createdAt, updatedAt }`
+  - 会話の中にしか無かったもの（エージェントが挙げた気になる点、「この設計は意図的」という人間の判断、「A と B を後で見比べる」など）を
+    store に置くための欄（#24 の第 2 段階、#46）。エージェントの会話履歴はリセットで捨てるが、メモは引き継ぎメッセージで再注入する
+    （specs/sessions/agent-session.md#コンテキストのリセット）
+  - エージェントは `save_note` / `update_note` / `delete_note` で、人間は UI（チャット欄の上の **📝 Notes**）で、同じものを読み書きする。
+    人間の操作は操作ログに入り、エージェントが人間のメモを変えたときはチャットに通知する
+  - 決着した論点（コメントにした、答えが出た、見送った）は消さずに `resolved` にする。引き継ぎと `get_review_context`（lean）には未解決のものだけを渡す
+  - 上限: 本文は 500 文字まで（HTTP と MCP で同じスキーマ。引き継ぎで毎回全文を再送するため）。エージェントが追加できる未解決のメモは 30 件まで
+    （超えると `save_note` をエラーにする。人間の追加は断らない）。解決済みは、解決した時刻が新しい 20 件だけ残す
+  - `ref` はメモの対象の場所（任意）。行には紐づけないので、ブランチが変わってもそのまま残す。Submit しても消さない
+
 store が変更されると `state` イベント（チャットを含まないスナップショット）を全 SSE クライアントに送る。
 チャットは量が多いので別系統の `chat` イベント（`append` / `delta` / `update`）として送る。
 
 ### 永続化
 
-状態は `<git-dir>/backcourt-duo/<head-branch>.json` に保存する（pending、変更案、推奨案、reviewState、plan、チャットログ、エージェントのセッション ID）。
+状態は `<git-dir>/backcourt-duo/<head-branch>.json` に保存する（pending、変更案、論点メモ、推奨案、reviewState、plan、チャットログ、エージェントのセッション ID）。
 `.git` の中に置くので誤ってコミットされない。同じブランチで再起動すると復元され、エージェントも SDK の `resume` で会話を引き継ぐ。エージェントの会話履歴はファイル／フェーズの区切りで捨て、store から作った引き継ぎメッセージで続ける（specs/sessions/agent-session.md#コンテキストのリセット）。
 `--fresh` を付けると破棄して最初から始める。Submit に成功したら pending と推奨案は空にする。
 
@@ -120,5 +134,8 @@ UI の操作:
 | DELETE | `/api/pending/:id` | 削除 |
 | POST | `/api/proposals/:id/stage` | 変更案を suggestion 付きの pending コメントに変換する |
 | DELETE | `/api/proposals/:id` | 変更案を却下する |
+| POST | `/api/notes` | 論点メモの作成（`{ text, path?, startLine?, endLine? }`） |
+| PATCH | `/api/notes/:id` | 論点メモの編集・解決（`{ text?, resolved? }`） |
+| DELETE | `/api/notes/:id` | 論点メモの削除 |
 | POST | `/api/submit` | `{ event: 'COMMENT'|'APPROVE'|'REQUEST_CHANGES', body }` PR に投稿 |
 | POST | `/api/auth/claude/login` | `claude auth login --claudeai` を起動する（サブスクでのサインイン） |
