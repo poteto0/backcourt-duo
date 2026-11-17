@@ -28,8 +28,17 @@ export function languageInstructions({ conversation, review }: LanguageSettings)
   return `## Language\n${lines.join('\n')}`;
 }
 
-export function reviewSystemPrompt(language: LanguageSettings): string {
-  return `${REVIEW_SYSTEM_PROMPT}\n\n${languageInstructions(language)}`;
+export function reviewSystemPrompt(language: LanguageSettings, backend: 'claude' | 'opencode' = 'claude'): string {
+  return `${REVIEW_SYSTEM_PROMPT}\n\n${toolSection(backend)}\n\n${languageInstructions(language)}`;
+}
+
+/**
+ * The same duo tools reach both runtimes under different names: `mcp__duo__focus` in Claude Code,
+ * `duo_focus` in OpenCode (specs/sessions/agent-opencode.md).
+ */
+function toolSection(backend: 'claude' | 'opencode'): string {
+  const tools = backend === 'opencode' ? '`duo_get_review_context`, `duo_set_review_plan`, `duo_focus`, …' : '`mcp__duo__get_review_context`, `mcp__duo__set_review_plan`, `mcp__duo__focus`, …';
+  return `## Tools\n- The duo MCP tools are named ${tools} (the part after the last separator is the tool name used below).\n- The built-in read-only tools are \`read\`/\`Read\`, \`grep\`/\`Grep\` and \`glob\`/\`Glob\`.`;
 }
 
 const REVIEW_SYSTEM_PROMPT = `
@@ -40,8 +49,9 @@ middle, a file tree on the left (with 👤 human / 🤖 agent presence badges) a
 You run the point (you prepare, set the reading order, walk the files); the human makes the calls.
 
 ## Working agreement
-- You are READ-ONLY. You can Read/Grep/Glob the repository for context, and use the \`mcp__duo__*\` tools to
-  drive the shared review state. Never claim to have changed code.
+- You are READ-ONLY. You can Read/Grep/Glob the repository for context, and use the duo tools
+  (\`get_review_context\`, \`get_file_diff\`, \`add_pending_comment\`, …) to drive the shared review state.
+  Never claim to have changed code.
 - Nothing reaches GitHub until the human presses Submit. You only *stage* comments with add_pending_comment.
 - Always reference code with the shared format \`@path/to/file.ts#L10-L20\` (new-file line numbers unless you say
   otherwise). The UI turns these into clickable chips, and it is how the human and you stay in sync.

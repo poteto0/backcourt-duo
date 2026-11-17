@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { isCommentable, isCommentableRange, rightLineTexts } from './diff.js';
 import type {
   Actor,
+  AgentBackend,
   AgentInfo,
   AgentStatus,
   ChangeProposal,
@@ -51,6 +52,8 @@ interface Persisted {
   phase: Phase;
   chat: ChatMessage[];
   agentSessionId: string | null;
+  /** Backend that created agentSessionId (absent in state written before #48 → claude). */
+  agentSessionBackend?: AgentBackend;
   lastSubmission: Submission | null;
   recommendation?: ReviewRecommendation | null;
   /** Language tags the agent conversation was last instructed with. */
@@ -83,6 +86,8 @@ export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] 
   recommendation: ReviewRecommendation | null = null;
   chat: ChatMessage[] = [];
   agentSessionId: string | null = null;
+  /** Which backend agentSessionId belongs to (a Claude UUID and an OpenCode `ses_…` are not interchangeable). */
+  agentSessionBackend: AgentBackend | null = null;
   /** Human actions since the agent's last turn (specs/sessions/agent-session.md). */
   private activity: string[] = [];
   private emitTimer: NodeJS.Timeout | null = null;
@@ -195,6 +200,7 @@ export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] 
     // The agent conversation and its verdict only carry over if the code under review is unchanged.
     const sameCode = data.headSha === this.target.headSha && data.mergeBaseSha === this.target.mergeBaseSha;
     this.agentSessionId = sameCode ? data.agentSessionId : null;
+    this.agentSessionBackend = sameCode && data.agentSessionId ? (data.agentSessionBackend ?? 'claude') : null;
     this.recommendation = sameCode ? (data.recommendation ?? null) : null;
     // A resumed conversation may have been held in other languages: tell the agent once, on its next turn.
     const was = data.language ?? { conversation: null, review: null };
@@ -232,6 +238,7 @@ export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] 
       phase: this.phase,
       chat: this.chat.slice(-500),
       agentSessionId: this.agentSessionId,
+      ...(this.agentSessionBackend ? { agentSessionBackend: this.agentSessionBackend } : {}),
       lastSubmission: this.lastSubmission,
       recommendation: this.recommendation,
       language: this.languageTags(),
@@ -558,10 +565,17 @@ export class ReviewStore extends EventEmitter<{ state: [string]; chat: [string] 
     return this.files.filter((f) => f.reviewState === 'reviewed').length;
   }
 
-  setAgentSessionId(id: string): void {
-    if (this.agentSessionId === id) return;
+  setAgentSessionId(id: string | null, backend: AgentBackend = 'claude'): void {
+    const nextBackend = id ? backend : null;
+    if (this.agentSessionId === id && this.agentSessionBackend === nextBackend) return;
     this.agentSessionId = id;
+    this.agentSessionBackend = nextBackend;
     this.scheduleSave();
+  }
+
+  /** The saved conversation id, only for the backend that created it. */
+  resumeIdFor(backend: AgentBackend): string | null {
+    return this.agentSessionBackend === backend ? this.agentSessionId : null;
   }
 }
 

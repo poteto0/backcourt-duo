@@ -2,9 +2,11 @@
 import { createServer } from 'node:net';
 import { loadRepoContext, type RepoContext } from './context.js';
 import { resolveAgentAuth, resolveAuthMode } from '../auth/agent.js';
-import { loadLanguage, type LanguageFlags } from '../config.js';
+import { resolveOpencodeAuth } from '../agent/opencode.js';
+import { loadLanguage, resolveBackend, type LanguageFlags } from '../config.js';
 import { describeLanguage } from '../../shared/language.js';
 import { style } from '../term.js';
+import type { AgentBackend } from '../../shared/types.js';
 
 export interface DoctorOptions {
   cwd: string;
@@ -12,6 +14,7 @@ export interface DoctorOptions {
   pr?: number | undefined;
   port: number;
   auth?: string | undefined;
+  agent?: AgentBackend | undefined;
   language: LanguageFlags;
   json: boolean;
 }
@@ -61,10 +64,20 @@ function languageChecks(flags: LanguageFlags, root: string | null): Check[] {
   return [{ name: 'language', level: 'ok', message: describeLanguage(value) }, ...warnings.map((w): Check => ({ name: 'language', level: 'warn', message: w }))];
 }
 
-async function agentChecks(authFlag: string | undefined): Promise<Check[]> {
+async function agentChecks(authFlag: string | undefined, backendFlag: DoctorOptions['agent']): Promise<Check[]> {
   try {
+    const backend = resolveBackend(backendFlag);
+    if (backend.value === 'opencode') {
+      const { auth, models } = await resolveOpencodeAuth();
+      return [
+        { name: 'agent', level: 'ok', message: 'backend opencode' },
+        { name: 'agent-auth', level: auth.ready ? 'ok' : 'fail', message: auth.ready ? `opencode: ${auth.binary ?? 'ready'} (${models.length} models)` : `opencode: ${auth.hint ?? 'not ready'}` },
+        ...backend.warnings.map((w): Check => ({ name: 'agent', level: 'warn', message: w })),
+      ];
+    }
     const a = (await resolveAgentAuth(resolveAuthMode(authFlag))).summary;
     return [
+      { name: 'agent', level: 'ok', message: 'backend claude' },
       { name: 'agent-auth', level: a.ready ? 'ok' : 'fail', message: a.ready ? `${a.mode}: ${a.account ?? a.method ?? 'ready'}${a.subscription ? ` (${a.subscription})` : ''}` : `${a.mode}: ${a.hint ?? 'not ready'}` },
       ...a.warnings.map((w): Check => ({ name: 'agent-auth', level: 'warn', message: w })),
     ];
@@ -80,7 +93,7 @@ export async function doctorCommand(opts: DoctorOptions): Promise<number> {
   const [repo, language, agent, free] = await Promise.all([
     ctx.then(repoChecks, (err: Error): Check[] => [{ name: 'git', level: 'fail', message: err.message }]),
     ctx.then((c) => c.root, () => null).then((root) => languageChecks(opts.language, root)),
-    agentChecks(opts.auth),
+    agentChecks(opts.auth, opts.agent),
     portFree(opts.port),
   ]);
   const checks: Check[] = [

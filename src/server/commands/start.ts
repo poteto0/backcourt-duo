@@ -8,10 +8,12 @@ import { GitError } from '../git.js';
 import { ReviewStore } from '../store.js';
 import { LocalSession, isLoopbackHost } from '../auth/local.js';
 import { resolveAuthMode } from '../auth/agent.js';
-import { loadLanguage, resolveEffort, resolveModel, saveUserConfig, type LanguageFlags } from '../config.js';
-import type { EffortLevel } from '../../shared/types.js';
+import { loadLanguage, resolveBackend, resolveEffort, resolveModel, saveUserConfig, type LanguageFlags } from '../config.js';
+import type { AgentBackend, EffortLevel } from '../../shared/types.js';
 import { describeLanguage } from '../../shared/language.js';
 import { AgentSession } from '../agent/session.js';
+import { OpencodeSession } from '../agent/opencode.js';
+import { DUO_MCP_PATH } from '../agent/mcp.js';
 import { createApp } from '../http.js';
 import { PACKAGE_ROOT, VERSION } from '../version.js';
 import { style } from '../term.js';
@@ -25,6 +27,7 @@ export interface StartOptions {
   port: number;
   host: string;
   auth?: string | undefined;
+  agentBackend?: AgentBackend | undefined;
   model?: string | undefined;
   effort?: EffortLevel | undefined;
   language: LanguageFlags;
@@ -39,6 +42,15 @@ export async function startCommand(opts: StartOptions): Promise<number> {
     return 64;
   }
   const authMode = resolveAuthMode(opts.auth);
+  const backend = resolveBackend(opts.agentBackend);
+  for (const w of backend.warnings) console.log(style.yellow(`   ${w}`));
+  if (opts.agentBackend !== undefined) {
+    // Switching the backend once makes it the default: the next run needs no --agent (#48).
+    await saveUserConfig({ agent: { backend: backend.value } })
+      .then(() => console.log(`   ${style.dim('agent')} ${backend.value} ${style.dim('(saved to ~/.backcourt-duo/config.json)')}`))
+      .catch((err: Error) => console.log(style.yellow(`   could not save the agent backend: ${err.message}`)));
+  }
+  if (backend.value === 'opencode' && opts.auth !== undefined) console.log(style.yellow('   --auth is ignored with --agent opencode (OpenCode uses its own credentials)'));
 
   let ctx;
   try {
@@ -77,12 +89,17 @@ export async function startCommand(opts: StartOptions): Promise<number> {
   const session = new LocalSession(opts.port);
   const effort = resolveEffort(opts.effort);
   for (const w of effort.warnings) console.log(style.yellow(`   ${w}`));
-  const agent = opts.agent ? new AgentSession(store, { authMode, model: resolveModel(opts.model), effort: effort.value }) : null;
+  const model = resolveModel(opts.model);
+  const agent = !opts.agent
+    ? null
+    : backend.value === 'opencode'
+      ? new OpencodeSession(store, { model, mcpUrl: `http://127.0.0.1:${opts.port}${DUO_MCP_PATH}`, token: session.token })
+      : new AgentSession(store, { authMode, model, effort: effort.value });
   if (!agent) store.setAgentStatus('disabled');
 
   const webRoot = join(PACKAGE_ROOT, 'dist', 'web');
   if (!existsSync(join(webRoot, 'index.html'))) console.log(style.yellow(`   web UI not built at ${webRoot} — run \`pnpm build\``));
-  const app = createApp({ store, session, agent, github: ctx.github, authMode, webRoot, saveSettings: saveUserConfig });
+  const app = createApp({ store, session, agent, github: ctx.github, authMode, agentBackend: backend.value, webRoot, saveSettings: saveUserConfig });
 
   const server = await new Promise<ReturnType<typeof serve> | null>((resolve) => {
     const s = serve({ fetch: app.fetch, port: opts.port, hostname: opts.host }, () => resolve(s));

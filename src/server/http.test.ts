@@ -204,3 +204,30 @@ test('the human can add, edit, resolve and delete notes, and the agent hears abo
   assert.equal(store.notes.length, 0);
   assert.deepEqual(store.drainActivity(), [`added note ${id}: "X is intentional"`, `resolved note ${id}`, `deleted note ${id}: "X is intentional"`]);
 });
+
+test('the MCP endpoint is only open to OpenCode and requires the session token', async () => {
+  const target = { base: 'origin/main', baseSha: 'b', head: 'HEAD', headSha: 'h', mergeBaseSha: 'm', uncommitted: false, branch: 'feat', repoRoot: '/r', repoName: 'r' };
+  const store = new ReviewStore(target, parseUnifiedDiff(DIFF), null);
+  const session = new LocalSession(1200);
+  const claude = createApp({ store, session, agent: null, github: null, authMode: 'claude-code', webRoot: '/x' });
+  const init = {
+    jsonrpc: '2.0',
+    id: 1,
+    method: 'initialize',
+    params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '1' } },
+  };
+  const headers = { ...host, Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' };
+  assert.equal((await claude.request('/mcp', { method: 'POST', headers, body: JSON.stringify(init) })).status, 404);
+
+  const app = createApp({ store, session, agent: null, github: null, authMode: 'claude-code', agentBackend: 'opencode', webRoot: '/x' });
+  assert.equal((await app.request('/mcp', { method: 'POST', headers: { ...host, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' }, body: JSON.stringify(init) })).status, 401);
+  const ready = await app.request('/mcp', { method: 'POST', headers, body: JSON.stringify(init) });
+  assert.equal(ready.status, 200);
+  assert.equal(((await ready.json()) as { result?: { serverInfo?: { name?: string } } }).result?.serverInfo?.name, 'duo');
+
+  const list = await app.request('/mcp', { method: 'POST', headers: { ...headers, 'MCP-Protocol-Version': '2025-06-18' }, body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }) });
+  assert.equal(list.status, 200);
+  const names = (((await list.json()) as { result?: { tools?: Array<{ name: string }> } }).result?.tools ?? []).map((t) => t.name);
+  assert.ok(names.includes('get_review_context'));
+  assert.ok(names.includes('add_pending_comment'));
+});

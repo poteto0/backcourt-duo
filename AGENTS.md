@@ -30,7 +30,7 @@ src/server/               Node 側（CLI、HTTP、git、GitHub、エージェン
   git.ts / diff.ts        git の呼び出しと unified diff のパーサ
   github.ts               PR の検索とレビューの投稿
   store.ts                レビュー状態（唯一の正）とイベントバス
-  agent/                  Claude Agent SDK セッション、MCP ツール、プロンプト
+  agent/                  Claude Agent SDK / OpenCode のセッション、MCP ツール、プロンプト
   http.ts                 Hono アプリ（REST + SSE + 静的配信）
 src/web/                  SolidJS の UI（Vite でビルド）
 specs/commands/           CLI コマンドの仕様
@@ -43,7 +43,8 @@ specs/architecture.md     状態モデル、presence、プロトコル
 - **TypeScript 7.0**（ネイティブ版 `tsc`）。`strict` に加え、`exactOptionalPropertyTypes` と `noUncheckedIndexedAccess` を有効にしている
 - Node.js 26（`nix develop` か direnv の `use flake` で入る。flake.nix を参照）。ESM のみ。engines は >=24
 - サーバー: Hono と `@hono/node-server`
-- エージェント: `@anthropic-ai/claude-agent-sdk`
+- エージェント: `@anthropic-ai/claude-agent-sdk`（デフォルト）、OpenCode は任意の `opencode` CLI をターンごとに起動し、
+  `@modelcontextprotocol/sdk` の `/mcp` 経由で duo ツールに接続する
 - Web: SolidJS と Vite（`vite-plugin-solid`）
 - サーバーは `tsc -p tsconfig.server.json` で `dist/server` に出力し、Web は `vite build` で `dist/web` に出力する
 
@@ -70,7 +71,8 @@ UI を開発するとき: `pnpm build:web --watch` を動かしたまま `node b
    送信時点の人間の presence と「前回のターンからの人間の操作ログ」を必ず添付する。
 3. **ファイル参照の書式は `@path/to/file.ts#L10-L20` に統一する**。チャット中のこの書式は UI でクリック可能なチップとして表示され、
    クリックすると該当箇所へジャンプする。エージェントのシステムプロンプトにもこの書式を使うよう指示してある。
-4. **エージェントは読み取り専用**。組み込みツールは `Read` / `Grep` / `Glob` だけを許可し、書き込み系と Bash は拒否する。
+4. **エージェントは読み取り専用**。Claude では組み込みツールを `Read` / `Grep` / `Glob` だけ許可し、書き込み系と Bash は拒否する。
+   OpenCode でも edit / shell / web / subagent / skill を拒否し、読み取り系と duo のツールだけを使わせる。
    GitHub への投稿は人間の Submit 操作からしか起きない（エージェントは pending を溜めるところまで）。
 5. **ローカルサーバーは 127.0.0.1 にのみ bind し、セッショントークンを必須にする**（specs/sessions/local-server.md）。
 6. 認証情報（API キー、OAuth トークン、GitHub トークン）は、ログ・SSE・永続化ファイル・エージェントのコンテキストのどこにも出さない。

@@ -1,5 +1,9 @@
 # エージェントの会話セッション
 
+このページは既定の Claude バックエンド（Claude Agent SDK）の動きを説明する。OpenCode バックエンドも
+ライフサイクル・コンテキストのリセット・MCP ツール・言語・人間メッセージの包み方は共通で、
+プロセスの持ち方とイベントの取り込みだけが違う（specs/sessions/agent-opencode.md）。
+
 ## ライフサイクル
 
 ```
@@ -18,6 +22,8 @@ stopped（サーバー終了時）
 - `POST /api/agent/restart` で close して作り直す（`resume` で同じ会話を続ける）
 - 保存するセッション ID（`agentSessionId`）は `result` を受け取ったときの `session_id`。init では保存しない（リセット直後の、
   引き継ぎメッセージをまだ送っていない会話を再起動時に resume しないため）
+  - どのバックエンドが作った ID かも `agentSessionBackend` に保存する。Claude は `resumeIdFor('claude')` が返す ID だけを使い、
+    OpenCode の `ses_…` を `resume` に渡さない（specs/sessions/agent-opencode.md#セッション）
 
 ## コンテキストのリセット
 
@@ -161,6 +167,9 @@ The last exchanges before the reset, from the chat log. The human still sees the
 
 ## MCP ツール（サーバー名は `duo`）
 
+ツールの定義は `src/server/agent/tools.ts` の `duoToolDefinitions()` が唯一の正で、Claude には
+`createSdkMcpServer` で in-process に渡し、OpenCode には `/mcp` の Streamable HTTP で同じものを公開する
+（specs/sessions/agent-opencode.md#mcp-エンドポイントmcp）。以下の表はどちらのバックエンドでも同じ。
 | tool | 入力 | 効果 |
 |---|---|---|
 | `get_review_context` | `{ detail?: 'lean'\|'full', includeBodies? }` | target、PR（タイトルと本文）、プラン（`summary` と読む順番。各ファイルの `priority` / `note` はプラン側にだけ載せる）、ファイル一覧（統計、reviewState、lockfile / 生成物なら `skipped: 'lockfile'\|'generated'`）、pending、変更案、未解決の論点メモ（lean では本文を 120 文字で切る。`includeBodies` / `full` で全文、`full` では解決済みも）、推奨 verdict、presence、phase、warnings。デフォルトの `lean` では PR 本文を 1500 文字で切り、pending は `{ id, path, side, line, startLine, author }`、推奨 verdict は `{ event }` だけ返し（本文は `includeBodies: true` のときだけ）、`language` は省く（システムプロンプトにあるため）。`full` では PR 本文を 6000 文字まで、本文と `language` も返す。どちらでも入れ子も含めて空配列・空オブジェクト・空文字列・`false`・`null`・未設定のフィールドは省く（warnings が無ければ `warnings` ごと省く） |

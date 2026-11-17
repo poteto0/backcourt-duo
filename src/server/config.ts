@@ -5,9 +5,9 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { z } from 'zod';
-import type { AccountDisplay, EffortLevel } from '../shared/types.js';
+import type { AccountDisplay, AgentBackend, EffortLevel } from '../shared/types.js';
 import { canonicalLanguageTag, LANGUAGE_TAG_HINT, languageSetting, languageSettings, type LanguageSetting, type LanguageSettings } from '../shared/language.js';
-import { AccountDisplaySchema, EffortSchema, LanguageTagSchema } from './schemas.js';
+import { AccountDisplaySchema, AgentBackendSchema, EffortSchema, LanguageTagSchema } from './schemas.js';
 import { writeFileAtomic } from './fs.js';
 
 /** A plain string sets both. */
@@ -19,7 +19,7 @@ const LanguageSchema = z.preprocess(
 /** Unknown keys are kept, so settings added by other features don't make the file invalid. */
 const ConfigSchema = z.looseObject({
   privacy: z.looseObject({ account: AccountDisplaySchema.optional() }).optional(),
-  agent: z.looseObject({ model: z.string().min(1).optional(), effort: EffortSchema.optional() }).optional(),
+  agent: z.looseObject({ backend: AgentBackendSchema.optional(), model: z.string().min(1).optional(), effort: EffortSchema.optional() }).optional(),
   language: LanguageSchema.optional(),
 });
 type Config = z.infer<typeof ConfigSchema>;
@@ -79,6 +79,12 @@ export function resolveAccountDisplay(env: NodeJS.ProcessEnv = process.env, conf
   return { value: envEnum(env, 'BACKCOURT_DUO_ACCOUNT', AccountDisplaySchema, warnings) ?? config.value.privacy?.account ?? 'hide', warnings };
 }
 
+/** --agent (validated by the CLI) > BACKCOURT_DUO_AGENT > config `agent.backend` > 'claude'. */
+export function resolveBackend(cli: AgentBackend | undefined, env: NodeJS.ProcessEnv = process.env, config: Loaded<Config> = userConfig()): Loaded<AgentBackend> {
+  const warnings = [...config.warnings];
+  return { value: cli ?? envEnum(env, 'BACKCOURT_DUO_AGENT', AgentBackendSchema, warnings) ?? config.value.agent?.backend ?? 'claude', warnings };
+}
+
 /** --model > BACKCOURT_DUO_MODEL > config `agent.model` > undefined (Claude Code's default). */
 export function resolveModel(cli: string | undefined, env: NodeJS.ProcessEnv = process.env, config: Loaded<Config> = userConfig()): string | undefined {
   return cli || env['BACKCOURT_DUO_MODEL'] || config.value.agent?.model;
@@ -135,7 +141,7 @@ export function loadLanguage(flags: LanguageFlags, repoRoot: string | null): Loa
 
 /** Settings the UI changes; `null` removes the key (back to the default). */
 export interface SettingsPatch {
-  agent?: { model?: string | null | undefined; effort?: EffortLevel | null | undefined };
+  agent?: { backend?: AgentBackend | null | undefined; model?: string | null | undefined; effort?: EffortLevel | null | undefined };
   language?: { conversation?: string | null | undefined; review?: string | null | undefined };
 }
 

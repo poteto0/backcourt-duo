@@ -157,11 +157,16 @@ export interface ReviewTarget {
 }
 
 export type AgentAuthMode = 'claude-code' | 'api-key';
+/**
+ * Which agent runtime drives the review. Claude (Claude Agent SDK) is the default;
+ * OpenCode is driven through its CLI + an MCP connection back to this server.
+ */
+export type AgentBackend = 'claude' | 'opencode';
 /** How the Claude account email is shown (`privacy.account`). */
 export type AccountDisplay = 'hide' | 'mask' | 'show';
 
 export interface AgentAuthSummary {
-  mode: AgentAuthMode;
+  mode: AgentAuthMode | 'opencode';
   ready: boolean;
   method?: string;
   account?: string;
@@ -183,6 +188,8 @@ export type AgentStatus = 'disabled' | 'starting' | 'thinking' | 'waiting' | 'er
 
 export interface AgentInfo {
   status: AgentStatus;
+  /** Which backend is running this session (`claude` when unset, for state saved before #48). */
+  backend?: AgentBackend | undefined;
   auth: AgentAuthSummary | null;
   error?: string;
   model?: string;

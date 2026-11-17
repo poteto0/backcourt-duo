@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { chmod, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadConfig, resolveAccountDisplay, resolveEffort, resolveModel, saveUserConfig } from './config.js';
+import { loadConfig, resolveAccountDisplay, resolveBackend, resolveEffort, resolveModel, saveUserConfig } from './config.js';
 import { displayAccount, resolveAgentAuth } from './auth/agent.js';
 
 const EMAIL = 'alice@example.com';
@@ -23,6 +23,19 @@ test('resolveAccountDisplay: env > config > hide', () => {
   const bogus = resolveAccountDisplay({ BACKCOURT_DUO_ACCOUNT: 'bogus' }, mask);
   assert.equal(bogus.value, 'mask');
   assert.match(bogus.warnings[0] ?? '', /BACKCOURT_DUO_ACCOUNT/);
+});
+
+test('resolveBackend: --agent > env > config agent.backend > claude; a bad env value warns', () => {
+  const cfg = { value: { agent: { backend: 'opencode' as const } }, warnings: [] };
+  assert.deepEqual(resolveBackend(undefined, {}, { value: {}, warnings: [] }), { value: 'claude', warnings: [] });
+  assert.equal(resolveBackend(undefined, {}, cfg).value, 'opencode');
+  assert.equal(resolveBackend(undefined, { BACKCOURT_DUO_AGENT: 'claude' }, cfg).value, 'claude');
+  assert.equal(resolveBackend('opencode', { BACKCOURT_DUO_AGENT: 'claude' }, { value: {}, warnings: [] }).value, 'opencode');
+  const bogus = resolveBackend(undefined, { BACKCOURT_DUO_AGENT: 'gpt' }, cfg);
+  assert.equal(bogus.value, 'opencode');
+  assert.match(bogus.warnings[0] ?? '', /BACKCOURT_DUO_AGENT/);
+  const broken = resolveBackend(undefined, {}, { value: {}, warnings: ['ignoring config.json: bad json'] });
+  assert.deepEqual(broken.warnings, ['ignoring config.json: bad json']);
 });
 
 test('resolveModel: --model > env > config agent.model > undefined', () => {

@@ -8,6 +8,19 @@ import { AgentPhaseSchema, cursorShape, noteShape, noteUpdateShape, pendingShape
 
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
 
+/** One duo tool, independent of the SDK that exposes it (Claude's in-process MCP or OpenCode's HTTP MCP). */
+export interface DuoToolDefinition {
+  name: string;
+  description: string;
+  shape: z.ZodRawShape;
+  run: (input: Record<string, unknown>) => Promise<ToolResult>;
+}
+
+/** Keeps each handler's input typed from its shape while storing it in the SDK-neutral list. */
+function define<S extends z.ZodRawShape>(name: string, description: string, shape: S, run: (input: z.infer<z.ZodObject<S>>) => Promise<ToolResult>): DuoToolDefinition {
+  return { name, description, shape, run: run as (input: Record<string, unknown>) => Promise<ToolResult> };
+}
+
 const ok = (value: unknown): ToolResult => ({ content: [{ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value) }] });
 const fail = (message: string): ToolResult => ({ content: [{ type: 'text', text: message }], isError: true });
 
@@ -63,19 +76,19 @@ export function reviewContext(store: ReviewStore, { detail = 'lean', includeBodi
   }) as Record<string, unknown>;
 }
 
-/** `mcp__duo__focus` → `focus`; built-in tools pass through. */
-export const shortToolName = (name: string) => name.replace(`mcp__${DUO_SERVER}__`, '');
+/** `mcp__duo__focus` (Claude) or `duo_focus` (OpenCode) → `focus`; built-in tools pass through. */
+export const shortToolName = (name: string) => name.replace(`mcp__${DUO_SERVER}__`, '').replace(new RegExp(`^${DUO_SERVER}_`), '');
 
-export function createDuoTools(store: ReviewStore, notify: (text: string) => void) {
+export function duoToolDefinitions(store: ReviewStore, notify: (text: string) => void): DuoToolDefinition[] {
   return [
-    tool(
+    define(
       'get_review_context',
       'Overview of the review: target refs, PR title/body, the review plan (summary, reading order, per-file notes), changed files (stats, review state; skipped = lockfile/generated, summarized by get_file_diff), pending comments and recommendation (bodies only with includeBodies), change proposals, open notes (clipped unless includeBodies), presence and phase. Empty fields are omitted. detail "full" adds the whole PR body, comment and note bodies, resolved notes and the chat / review languages.',
       reviewContextShape,
       async (input) => guard(() => ok(reviewContext(store, input))),
     ),
 
-    tool(
+    define(
       'get_file_diff',
       "Diff of one changed file. Added/context lines carry the new line number (R), deleted lines the old one (L). Only these lines can receive comments. Long diffs are paged: pass the offset from the truncation note to continue. Lockfiles and generated files (dist/, *.min.js, *.snap, …) return a one-line summary unless force is true.",
       {
@@ -90,7 +103,7 @@ export function createDuoTools(store: ReviewStore, notify: (text: string) => voi
         }),
     ),
 
-    tool(
+    define(
       'set_review_plan',
       'Register the reading order for the walkthrough (riskiest/central first). Moves phase from preparing to walkthrough. Files you omit are appended as low priority.',
       {
@@ -104,7 +117,7 @@ export function createDuoTools(store: ReviewStore, notify: (text: string) => voi
         }),
     ),
 
-    tool(
+    define(
       'focus',
       "Move the agent cursor to a file (and optionally a line range). The human's diff view follows when 'follow agent' is on. Call this before discussing any code.",
       { ...cursorShape, note: z.string().optional().describe('short label shown next to the highlight, e.g. "error handling"') },
@@ -115,11 +128,11 @@ export function createDuoTools(store: ReviewStore, notify: (text: string) => voi
         }),
     ),
 
-    tool('get_human_focus', 'Where the human is currently looking (file, selected lines) and whether they follow you.', {}, async () =>
+    define('get_human_focus', 'Where the human is currently looking (file, selected lines) and whether they follow you.', {}, async () =>
       guard(() => ok({ human: store.presence.human, followAgent: store.followAgent })),
     ),
 
-    tool(
+    define(
       'add_pending_comment',
       'Stage a review comment (posted to GitHub only when the human submits). line = last line of the range; startLine for multi-line. Must be inside a diff hunk.',
       pendingShape,
@@ -130,7 +143,7 @@ export function createDuoTools(store: ReviewStore, notify: (text: string) => voi
         }),
     ),
 
-    tool('update_pending_comment', 'Edit the body of a pending comment.', { id: z.string(), body: z.string() }, async ({ id, body }) =>
+    define('update_pending_comment', 'Edit the body of a pending comment.', { id: z.string(), body: z.string() }, async ({ id, body }) =>
       guard(() => {
         const c = store.updatePending(id, body, 'agent');
         if (c.author === 'human') notify(`🤖 edited your pending comment ${id}`);
@@ -138,7 +151,7 @@ export function createDuoTools(store: ReviewStore, notify: (text: string) => voi
       }),
     ),
 
-    tool('delete_pending_comment', 'Remove a pending comment.', { id: z.string() }, async ({ id }) =>
+    define('delete_pending_comment', 'Remove a pending comment.', { id: z.string() }, async ({ id }) =>
       guard(() => {
         const c = store.deletePending(id, 'agent');
         if (c.author === 'human') notify(`🤖 deleted your pending comment ${id}`);
@@ -146,7 +159,7 @@ export function createDuoTools(store: ReviewStore, notify: (text: string) => voi
       }),
     ),
 
-    tool(
+    define(
       'propose_change',
       'Show a concrete code change inline in the diff, under new-file lines startLine..endLine (R numbers, one hunk). It is only displayed — no file is modified. The human can stage it as a GitHub suggestion comment or dismiss it.',
       {
@@ -163,14 +176,14 @@ export function createDuoTools(store: ReviewStore, notify: (text: string) => voi
         }),
     ),
 
-    tool('withdraw_proposal', 'Remove a change proposal you made (e.g. superseded by a better one).', { id: z.string() }, async ({ id }) =>
+    define('withdraw_proposal', 'Remove a change proposal you made (e.g. superseded by a better one).', { id: z.string() }, async ({ id }) =>
       guard(() => {
         store.removeProposal(id, 'agent');
         return ok({ ok: true });
       }),
     ),
 
-    tool(
+    define(
       'save_note',
       'Save a discussion point or memo to the shared notes (the human sees and edits them in the UI). Notes survive the periodic clearing of your conversation; chat does not. Save: each concern you raise for the human to decide on, the human\'s decisions and stated intent ("X is intentional"), things to check or compare later.',
       noteShape,
@@ -181,7 +194,7 @@ export function createDuoTools(store: ReviewStore, notify: (text: string) => voi
         }),
     ),
 
-    tool(
+    define(
       'update_note',
       'Edit a note, or resolve it once it is settled (staged as a comment, answered, dropped). Resolve instead of deleting so the decision is kept.',
       { id: z.string(), ...noteUpdateShape },
@@ -193,7 +206,7 @@ export function createDuoTools(store: ReviewStore, notify: (text: string) => voi
         }),
     ),
 
-    tool('delete_note', 'Remove a note that was wrong or a duplicate.', { id: z.string() }, async ({ id }) =>
+    define('delete_note', 'Remove a note that was wrong or a duplicate.', { id: z.string() }, async ({ id }) =>
       guard(() => {
         const n = store.deleteNote(id, 'agent');
         if (n.author === 'human') notify(`🤖 deleted your note ${id}`);
@@ -201,14 +214,14 @@ export function createDuoTools(store: ReviewStore, notify: (text: string) => voi
       }),
     ),
 
-    tool('mark_file_reviewed', 'Mark a file as reviewed (the "Viewed" checkbox) once you and the human are done with it.', { path: z.string() }, async ({ path }) =>
+    define('mark_file_reviewed', 'Mark a file as reviewed (the "Viewed" checkbox) once you and the human are done with it.', { path: z.string() }, async ({ path }) =>
       guard(() => {
         store.setReviewState(path, 'reviewed', 'agent');
         return ok({ ok: true, remaining: store.files.filter((f) => f.reviewState !== 'reviewed').map((f) => f.path) });
       }),
     ),
 
-    tool(
+    define(
       'recommend_review',
       'At wrap-up, register your suggested verdict and overall review summary. The Submit dialog opens with them prefilled; the human can submit as-is or edit. Calling again replaces the previous recommendation.',
       { event: ReviewEventSchema, body: z.string().min(1).describe('overall review summary (Markdown), written for the PR author') },
@@ -219,13 +232,18 @@ export function createDuoTools(store: ReviewStore, notify: (text: string) => voi
         }),
     ),
 
-    tool('set_phase', 'Declare the review phase. Use wrapup once every file is reviewed.', { phase: AgentPhaseSchema }, async ({ phase }) =>
+    define('set_phase', 'Declare the review phase. Use wrapup once every file is reviewed.', { phase: AgentPhaseSchema }, async ({ phase }) =>
       guard(() => {
         store.setPhase(phase);
         return ok({ ok: true, phase });
       }),
     ),
   ];
+}
+
+/** The same definitions as in-process MCP tools for the Claude Agent SDK. */
+export function createDuoTools(store: ReviewStore, notify: (text: string) => void) {
+  return duoToolDefinitions(store, notify).map((d) => tool(d.name, d.description, d.shape, (input) => d.run(input)));
 }
 
 export function createDuoServer(tools: ReturnType<typeof createDuoTools>) {
