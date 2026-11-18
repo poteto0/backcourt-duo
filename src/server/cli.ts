@@ -3,17 +3,18 @@ import { parseArgs } from 'node:util';
 import { resolve } from 'node:path';
 import { VERSION } from './version.js';
 import { canonicalLanguageTag, LANGUAGE_TAG_HINT } from '../shared/language.js';
-import { EFFORT_LEVELS, type EffortLevel } from '../shared/types.js';
+import { EFFORT_LEVELS, type AgentBackend, type EffortLevel } from '../shared/types.js';
 
-const HELP = `🏀 backcourt-duo v${VERSION} — pair-review a PR with a Claude agent, locally.
+const HELP = `🏀 backcourt-duo v${VERSION} — pair-review a PR with an AI agent, locally.
 
 Usage
   backcourt-duo [start] [options]      start the review server (http://localhost:1200)
-  backcourt-duo auth status [--json] [--show-account]
-                                       show Claude + GitHub auth
-  backcourt-duo auth login [--github] [--console]
-                                       sign in (default: Claude subscription via Claude Code)
-  backcourt-duo auth logout --claude   log Claude Code out
+  backcourt-duo auth status [--json] [--show-account] [--agent <name>]
+                                       show agent + GitHub auth
+  backcourt-duo auth login [--github] [--console] [--agent <name>]
+                                       sign in (default: the selected backend)
+  backcourt-duo auth logout [--agent <name>] [--yes]
+                                       log the selected backend out
   backcourt-duo doctor [--json]        preflight checks
 
 Start options
@@ -24,7 +25,11 @@ Start options
   --uncommitted        include working-tree changes
   --port <n>           default 1200 (BACKCOURT_DUO_PORT)
   --host <addr>        loopback only (default 127.0.0.1)
-  --auth <mode>        claude-code (default) | api-key   (BACKCOURT_DUO_AUTH)
+  --auth <mode>        Claude auth: claude-code (default) | api-key
+                       (BACKCOURT_DUO_AUTH; ignored with --agent opencode)
+  --agent <name>       review agent runtime: claude (default) | opencode
+                       (BACKCOURT_DUO_AGENT, config agent.backend);
+                       passing it once saves it as the new default
   --model <id>         agent model (BACKCOURT_DUO_MODEL, config agent.model);
                        switchable from the chat header
   --effort <level>     agent reasoning effort: low | medium | high | xhigh | max
@@ -42,6 +47,8 @@ Start options
 Settings (~/.backcourt-duo/config.json)
   privacy.account      Claude account email: hide (default) | mask | show
                        (BACKCOURT_DUO_ACCOUNT)
+  agent.backend        review agent runtime: claude (default) | opencode
+                       (--agent / BACKCOURT_DUO_AGENT win)
   agent.model          default agent model, e.g. "sonnet" (--model / BACKCOURT_DUO_MODEL win)
   agent.effort         default reasoning effort, e.g. "high" (--effort / BACKCOURT_DUO_EFFORT win)
   language             "ja" (both) or { "conversation": "ja", "review": "en" };
@@ -56,6 +63,7 @@ const OPTIONS = {
   port: { type: 'string' },
   host: { type: 'string', default: '127.0.0.1' },
   auth: { type: 'string' },
+  agent: { type: 'string' },
   model: { type: 'string' },
   effort: { type: 'string' },
   lang: { type: 'string' },
@@ -96,6 +104,13 @@ function effortOption(raw: string | undefined): EffortLevel | undefined {
   return level;
 }
 
+function agentOption(raw: string | undefined): AgentBackend | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === 'claude' || raw === 'claude-code') return 'claude';
+  if (raw === 'opencode') return 'opencode';
+  throw new UsageError(`--agent must be claude or opencode`);
+}
+
 class UsageError extends Error {}
 
 export async function main(argv: string[]): Promise<number> {
@@ -133,6 +148,7 @@ export async function main(argv: string[]): Promise<number> {
           port,
           host: v.host,
           auth: v.auth,
+          agentBackend: agentOption(v.agent),
           model: v.model,
           effort: effortOption(v.effort),
           language,
@@ -143,7 +159,7 @@ export async function main(argv: string[]): Promise<number> {
       }
       case 'auth': {
         const auth = await import('./commands/auth.js');
-        const opts = { cwd, json: v.json, auth: v.auth, claude: v.claude, github: v.github, console: v.console, yes: v.yes, showAccount: v['show-account'] };
+        const opts = { cwd, json: v.json, auth: v.auth, agent: agentOption(v.agent), claude: v.claude, github: v.github, console: v.console, yes: v.yes, showAccount: v['show-account'] };
         if (sub === undefined || sub === 'status') return await auth.authStatus(opts);
         if (sub === 'login') return await auth.authLogin(opts);
         if (sub === 'logout') return await auth.authLogout(opts);
@@ -151,7 +167,7 @@ export async function main(argv: string[]): Promise<number> {
       }
       case 'doctor': {
         const { doctorCommand } = await import('./commands/doctor.js');
-        return await doctorCommand({ cwd, base: v.base, pr: intOption('pr', v.pr), port, auth: v.auth, language, json: v.json });
+        return await doctorCommand({ cwd, base: v.base, pr: intOption('pr', v.pr), port, auth: v.auth, agent: agentOption(v.agent), language, json: v.json });
       }
       case 'help':
         console.log(HELP);

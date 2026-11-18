@@ -5,10 +5,9 @@ import { isSignInError, looksLikeAuthError, resolveAgentAuth, type ResolvedAgent
 import { startClaudeLogin } from '../auth/claude-login.js';
 import { createDuoServer, createDuoTools, DUO_SERVER, shortToolName } from './tools.js';
 import { handoffMessage, kickoffPrompt, reviewSystemPrompt, wrapHumanMessage } from './prompts.js';
+import { describeTool } from './toolSummary.js';
 import { compact, mergeRateLimit, TokenMeter } from './usage.js';
-import type { AgentAuthMode, AgentStatus, AgentUsage, ChatMessage, EffortLevel, ModelOption, Phase, Ref } from '../../shared/types.js';
-import { formatRef } from '../../shared/types.js';
-import { truncate } from '../../shared/text.js';
+import type { AgentAuthMode, AgentStatus, AgentUsage, ChatMessage, EffortLevel, ModelOption, Phase } from '../../shared/types.js';
 
 const READ_ONLY_TOOLS = ['Read', 'Grep', 'Glob'];
 const DENIED_TOOLS = ['Bash', 'Write', 'Edit', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Agent', 'Task'];
@@ -98,6 +97,7 @@ export class AgentSession {
   /** Open the session (resolving auth unless given). Sends the kickoff unless resuming. */
   async start(resolved?: ResolvedAgentAuth): Promise<void> {
     const gen = ++this.generation;
+    this.store.setAgent({ backend: 'claude' });
     this.store.setAgentStatus('starting');
     const auth = resolved ?? (await resolveAgentAuth(this.opts.authMode));
     if (gen !== this.generation) return;
@@ -112,7 +112,7 @@ export class AgentSession {
     this.auth = auth;
     this.costBase = 0;
     this.handoffReason = null;
-    const resume = this.store.agentSessionId;
+    const resume = this.store.resumeIdFor('claude');
     if (!resume && !this.store.plan) this.store.setPhase('preparing');
     const q = this.open(auth, gen, resume);
     void q
@@ -421,7 +421,7 @@ export class AgentSession {
       case 'result': {
         this.endTurn();
         // Saved once a turn completes, not at init: a restart then never resumes a reset conversation that lacks the handoff.
-        this.store.setAgentSessionId(m.session_id);
+        this.store.setAgentSessionId(m.session_id, 'claude');
         this.afterTurn(m.total_cost_usd);
         if (m.subtype === 'success' && !m.is_error) {
           this.store.setAgentStatus('waiting');
@@ -446,36 +446,4 @@ function toModelOption(m: ModelInfo): ModelOption {
     description: m.description,
     supportedEffortLevels: m.supportsEffort ? m.supportedEffortLevels : undefined,
   };
-}
-
-const num = (v: unknown) => (typeof v === 'number' ? v : undefined);
-const str = (v: unknown) => (typeof v === 'string' ? v : undefined);
-
-/** One-line chat summary of a tool call, linking to the location it touches. */
-function describeTool(name: string, input: Record<string, unknown>, root: string): NonNullable<ChatMessage['tool']> {
-  const short = shortToolName(name);
-  const path = str(input['path']);
-  const ref: Ref | undefined = path === undefined ? undefined : { path, startLine: num(input['startLine']) ?? num(input['line']), endLine: num(input['endLine']) ?? num(input['line']) };
-  const at = ref ? formatRef(ref) : '';
-  const summaries: Record<string, () => string> = {
-    focus: () => `📍 focus ${at}${str(input['note']) ? ` — ${str(input['note'])}` : ''}`,
-    get_review_context: () => '🗂️ read review context',
-    get_file_diff: () => `🧾 read diff ${at}`,
-    set_review_plan: () => `🗺️ set review plan (${Array.isArray(input['files']) ? input['files'].length : 0} files)`,
-    get_human_focus: () => '👀 checked where you are',
-    add_pending_comment: () => `💬 staged comment on ${at}`,
-    update_pending_comment: () => `✏️ edited pending ${str(input['id']) ?? ''}`,
-    delete_pending_comment: () => `🗑️ deleted pending ${str(input['id']) ?? ''}`,
-    propose_change: () => `💡 proposed a change on ${at}`,
-    withdraw_proposal: () => `↩️ withdrew proposal ${str(input['id']) ?? ''}`,
-    save_note: () => `📝 noted${at ? ` on ${at}` : ''}: ${truncate(str(input['text']) ?? '', 80)}`,
-    update_note: () => `📝 ${input['resolved'] === true ? 'resolved' : input['resolved'] === false ? 'reopened' : 'edited'} note ${str(input['id']) ?? ''}`,
-    delete_note: () => `🗑️ deleted note ${str(input['id']) ?? ''}`,
-    mark_file_reviewed: () => `✅ marked ${at} reviewed`,
-    set_phase: () => `🏁 phase → ${str(input['phase']) ?? ''}`,
-    Read: () => `📖 Read ${(str(input['file_path']) ?? '').replace(`${root}/`, '')}`,
-    Grep: () => `🔎 Grep ${JSON.stringify(str(input['pattern']) ?? '')}${path ? ` in ${path}` : ''}`,
-    Glob: () => `🔎 Glob ${str(input['pattern']) ?? ''}`,
-  };
-  return { summary: summaries[short]?.() ?? `🔧 ${short}`, ref: short === 'Grep' ? undefined : ref };
 }

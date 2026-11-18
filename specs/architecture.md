@@ -4,12 +4,15 @@
 ┌──────────── browser (SolidJS) ────────────┐        ┌──────── backcourt-duo (Node) ────────┐
 │ FileTree │ DiffView           │ ChatPanel │  SSE   │ ReviewStore ── persist → .git/backcourt-duo/
 │  👤🤖     │ inline pending     │ stream    │◀──────│   ▲      ▲                                │
-│          │ comments            │           │  REST │   │      │ MCP tools (in-process)        │
+│          │ comments            │           │  REST │   │      │ MCP tools (Claude | /mcp)     │
 │          │                     │           │──────▶│ http.ts  AgentSession ── Claude Agent SDK │
-└───────────────────────────────────────────┘        │            │ query(streaming input)       │
+└───────────────────────────────────────────┘        │          OpencodeSession ── opencode run  │
                                                       │ git.ts / diff.ts      github.ts ── PR API │
                                                       └──────────────────────────────────────────┘
 ```
+
+Claude は in-process の MCP サーバー、OpenCode は同じツール定義を `/mcp` の Streamable HTTP で使う
+（specs/sessions/agent-opencode.md）。
 
 ## ReviewStore（唯一の正）
 
@@ -25,7 +28,7 @@ interface ReviewState {
   pending: PendingComment[];
   proposals: ChangeProposal[];         // エージェントの変更案（表示のみ。ファイルには適用しない）
   notes: ReviewNote[];                 // 論点メモ。エージェントの会話がリセットされても残る記憶
-  agent: { status: 'starting' | 'thinking' | 'waiting' | 'error' | 'stopped' | 'signed-out'; auth: AgentAuthSummary; error?: string };
+  agent: { status: 'starting' | 'thinking' | 'waiting' | 'error' | 'stopped' | 'signed-out'; backend?: 'claude' | 'opencode'; auth: AgentAuthSummary; error?: string };
   github: { auth: GitHubAuthSummary };
   lastSubmission: { url: string; at: string; count: number } | null;
   recommendation: { event: 'COMMENT'|'APPROVE'|'REQUEST_CHANGES'; body: string } | null; // エージェントの推奨案
@@ -73,8 +76,9 @@ store が変更されると `state` イベント（チャットを含まない�
 
 ### 永続化
 
-状態は `<git-dir>/backcourt-duo/<head-branch>.json` に保存する（pending、変更案、論点メモ、推奨案、reviewState、plan、チャットログ、エージェントのセッション ID）。
-`.git` の中に置くので誤ってコミットされない。同じブランチで再起動すると復元され、エージェントも SDK の `resume` で会話を引き継ぐ。エージェントの会話履歴はファイル／フェーズの区切りで捨て、store から作った引き継ぎメッセージで続ける（specs/sessions/agent-session.md#コンテキストのリセット）。
+状態は `<git-dir>/backcourt-duo/<head-branch>.json` に保存する（pending、変更案、論点メモ、推奨案、reviewState、plan、チャットログ、エージェントのセッション ID とそのバックエンド）。
+`.git` の中に置くので誤ってコミットされない。同じブランチで再起動すると復元され、エージェントも SDK / OpenCode の resume で会話を引き継ぐ。エージェントの会話履歴はファイル／フェーズの区切りで捨て、store から作った引き継ぎメッセージで続ける（specs/sessions/agent-session.md#コンテキストのリセット）。
+Claude の UUID と OpenCode の `ses_…` は混ざらないよう、`agentSessionBackend` が一致するときだけ resume する。
 `--fresh` を付けると破棄して最初から始める。Submit に成功したら pending と推奨案は空にする。
 
 ## Presence（「いまどこを読んでいるか」の共有）
@@ -112,6 +116,9 @@ UI の操作:
 フェーズの遷移は MCP ツール経由でエージェントが宣言する。人間はチャットでいつでも割り込める（「先に X を見たい」など）。
 
 ## HTTP API（すべて `/api` 配下で、セッション必須）
+
+MCP の `/mcp` だけは `/api` の外にあり、`Authorization: Bearer <session token>` で認証する（OpenCode のときだけ有効。
+specs/sessions/agent-opencode.md#mcp-エンドポイントmcp）。
 
 | Method | Path | 説明 |
 |---|---|---|

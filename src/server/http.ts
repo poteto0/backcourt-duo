@@ -8,22 +8,25 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { SESSION_COOKIE, type LocalSession } from './auth/local.js';
 import { StoreError, type ReviewStore } from './store.js';
-import type { AgentSession } from './agent/session.js';
+import type { AgentRuntime } from './agent/backend.js';
 import { LoginBusyError } from './auth/claude-login.js';
 import { GitHubError, submitReview } from './github.js';
 import { readNewFileLines } from './git.js';
 import type { ResolvedGitHubAuth } from './auth/github.js';
-import type { AgentAuthMode, HelloEvent } from '../shared/types.js';
+import type { AgentAuthMode, AgentBackend, HelloEvent } from '../shared/types.js';
 import { CursorSchema, EffortSchema, LanguageTagSchema, NoteCreateSchema, NoteUpdateSchema, PendingCreateSchema, ReviewEventSchema, ReviewStateSchema } from './schemas.js';
 import { VERSION } from './version.js';
 import type { SettingsPatch } from './config.js';
+import { DUO_MCP_PATH, handleDuoMcpRequest } from './agent/mcp.js';
 
 export interface AppDeps {
   store: ReviewStore;
   session: LocalSession;
-  agent: AgentSession | null;
+  agent: AgentRuntime | null;
   github: ResolvedGitHubAuth | null;
   authMode: AgentAuthMode;
+  /** Which runtime is running the agent; the MCP endpoint is only opened for OpenCode (default claude). */
+  agentBackend?: AgentBackend;
   webRoot: string;
   /** Persists settings changed from the UI (the user config); absent = not persisted (tests). */
   saveSettings?: (patch: SettingsPatch) => Promise<void>;
@@ -84,6 +87,15 @@ export function createApp(deps: AppDeps): Hono {
     if (err instanceof z.ZodError) return c.json({ error: err.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ') }, 400);
     console.error(err);
     return c.json({ error: err.message }, 500);
+  });
+
+  // --- MCP for backends that run out of process (OpenCode). Bearer token only: MCP clients send no Origin.
+  app.all(DUO_MCP_PATH, async (c) => {
+    if (deps.agentBackend !== 'opencode') return c.json({ error: 'not found' }, 404);
+    const bearer = c.req.header('authorization')?.replace(/^Bearer\s+/i, '');
+    if (!session.matches(bearer)) return c.json({ error: 'unauthorized' }, 401);
+    if (c.req.method !== 'POST') return c.text('method not allowed', 405);
+    return handleDuoMcpRequest(c.req.raw, store);
   });
 
   /** The switch already applied, so a failed save is only reported in the chat. */
@@ -213,6 +225,7 @@ export function createApp(deps: AppDeps): Hono {
 
   // ------------------------------------------------------------ auth
   app.post('/api/auth/claude/login', async (c) => {
+    if (deps.agentBackend === 'opencode') return c.json({ error: 'OpenCode uses its own credentials; run `opencode auth login`' }, 409);
     if (deps.authMode !== 'claude-code') return c.json({ error: 'sign-in is only used in claude-code mode' }, 409);
     if (!deps.agent) return c.json({ error: 'agent disabled (--no-agent)' }, 409);
     try {

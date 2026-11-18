@@ -15,10 +15,13 @@ backcourt-duo [start] [options]
   --uncommitted         working tree の未コミット変更も diff に含める（その行へのコメントは投稿時に失敗しうる）
   --port <n>            デフォルトは 1200（環境変数 BACKCOURT_DUO_PORT でも指定可）
   --host <addr>         デフォルトは 127.0.0.1。ループバック以外のアドレスは拒否する
-  --auth <mode>         エージェントの認証。claude-code（デフォルト）または api-key
-  --model <id>          エージェントのモデル（省略すると設定ファイルの agent.model、それもなければ Claude Code の既定モデル）
+  --agent <name>        レビューを担当するエージェント: claude（デフォルト）または opencode。
+                        指定すると次回以降のデフォルトとして ~/.backcourt-duo/config.json に保存する
+  --auth <mode>         Claude の認証。claude-code（デフォルト）または api-key（--agent opencode では無視）
+  --model <id>          エージェントのモデル（省略すると設定ファイルの agent.model、それもなければ各バックエンドの既定）
+                        OpenCode では `provider/model` 形式（例: `opencode/claude-sonnet-4`）
   --effort <level>      エージェントの effort（思考の深さ）。low / medium / high / xhigh / max
-                        （省略すると設定ファイルの agent.effort、それもなければモデルの既定）
+                        （省略すると設定ファイルの agent.effort、それもなければモデルの既定。OpenCode では使わない）
   --lang <tag>          会話とレビューの両方の言語（BCP 47。下記「言語」参照）
   --chat-lang <tag>     エージェントと話す言語
   --review-lang <tag>   GitHub に投稿されるコメント・総評の言語
@@ -70,6 +73,7 @@ backcourt-duo [start] [options]
     "account": "hide"
   },
   "agent": {
+    "backend": "opencode",
     "model": "sonnet",
     "effort": "high"
   },
@@ -88,6 +92,7 @@ backcourt-duo [start] [options]
 - 知らないキーは無視する（ほかの機能の設定を足してもエラーにしない）
 - 認証情報は入れない（AGENTS.md の原則 6）
 - **UI で切り替えた設定はここに書き戻す**（`agent.model`、`agent.effort`、`language.conversation` / `language.review`）。次回の起動からもその値を使う。
+  `--agent` でバックエンドを指定したときも `agent.backend` を書き戻す（#48。次回は `--agent` なしで同じバックエンドを使う）。
   - 書き込みは `saveUserConfig`（`src/server/config.ts`）が行う。ファイルを読み直して該当キーだけを書き換えるので、ほかのキーや知らないキーは残る。
     「既定に戻す」（effort の default、言語の auto）はキーを消す。`"language": "ja"` のような文字列は、片方だけ変えられるよう `{ conversation, review }` に展開してから書く
   - 一時ファイルに書いてから rename する。書き込みは直列化する
@@ -96,8 +101,9 @@ backcourt-duo [start] [options]
 
 | キー | 値 | 環境変数 | 説明 |
 |---|---|---|---|
-| `agent.model` | モデル ID またはエイリアス（例: `sonnet`）。省略時は Claude Code の既定モデル | `BACKCOURT_DUO_MODEL` | エージェントの既定モデル。`--model` がさらに優先する。起動後は UI で切り替えられる（specs/sessions/agent-session.md#モデルの切り替え） |
-| `agent.effort` | `low` / `medium` / `high` / `xhigh` / `max`。省略時はモデルの既定 | `BACKCOURT_DUO_EFFORT` | エージェントの既定 effort。`--effort` がさらに優先する。不正な環境変数の値は警告して無視する。起動後は UI で切り替えられる（specs/sessions/agent-session.md#effort-の切り替え） |
+| `agent.backend` | `claude`（デフォルト） / `opencode` | `BACKCOURT_DUO_AGENT` | レビューを担当するエージェント（specs/sessions/agent-opencode.md）。`--agent` がさらに優先し、指定するとこのキーに保存される |
+| `agent.model` | モデル ID またはエイリアス（例: `sonnet`）。省略時は Claude（または OpenCode）の既定モデル | `BACKCOURT_DUO_MODEL` | エージェントの既定モデル。`--model` がさらに優先する。起動後は UI で切り替えられる（specs/sessions/agent-session.md#モデルの切り替え） |
+| `agent.effort` | `low` / `medium` / `high` / `xhigh` / `max`。省略時はモデルの既定 | `BACKCOURT_DUO_EFFORT` | エージェントの既定 effort。`--effort` がさらに優先する。不正な環境変数の値は警告して無視する。起動後は UI で切り替えられる（specs/sessions/agent-session.md#effort-の切り替え）。OpenCode では使わない |
 | `privacy.account` | `hide`（デフォルト） / `mask` / `show` | `BACKCOURT_DUO_ACCOUNT` | Claude アカウントのメールアドレスの表示方法（specs/sessions/agent-claude-code.md#アカウントの表示） |
 | `language` | `"ja"`（両方）または `{ "conversation": "ja", "review": "en" }` | `BACKCOURT_DUO_LANG` ほか | 下記「言語」 |
 
@@ -141,8 +147,9 @@ backcourt-duo [start] [options]
 4. GitHub 認証を解決し、PR を検出する（失敗しても続行する）。`--pr` の場合は手順 2 より前に PR の取得と fetch を行う
 5. 言語を解決し（上記「言語」）、保存されている状態があれば読み込む（`--fresh` のときは読まない）
 6. ブラウザで `http://localhost:<port>/?token=<token>` を開き、URL をターミナルにも表示する
-7. エージェントの認証を解決する（specs/sessions/agent-*.md）
-   - 使える場合はセッションを開始し、キックオフメッセージ（preparing フェーズ）を送る。復元したセッションがある場合は resume し、キックオフは送らない
+7. エージェントのバックエンドを解決する（`--agent` > `BACKCOURT_DUO_AGENT` > `agent.backend` > `claude`。specs/sessions/agent-opencode.md）
+   - Claude: 認証を解決する（specs/sessions/agent-*.md）。使える場合はセッションを開始し、キックオフメッセージ（preparing フェーズ）を送る。復元したセッションがある場合は resume し、キックオフは送らない
+   - OpenCode: インストールとモデル一覧を確認し、`opencode run` をターンごとに起動する。モデル一覧が取れない場合は `agent.status = 'signed-out'` にして UI にサインインの案内を出す
    - claude-code モードでサインインしていない場合は `agent.status = 'signed-out'` にし、UI に「Sign in with Claude」ボタンを出す
 8. `SIGINT` / `SIGTERM` を受けたら状態を保存し、エージェントを close して終了する
 

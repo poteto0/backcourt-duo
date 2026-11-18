@@ -140,13 +140,28 @@ export function ChatPanel() {
       <Switch>
         <Match when={status() === 'signed-out'}>
           <div class="signin">
-            <p>{s().agent.error ?? s().agent.auth?.hint ?? 'Sign in to Claude to start the agent.'}</p>
-            <button class="btn primary" disabled={s().agent.loginInProgress} onClick={() => void api.claudeLogin().catch((e: Error) => setError(e.message))}>
-              {s().agent.loginInProgress ? 'Waiting for browser sign-in…' : 'Sign in with Claude'}
-            </button>
-            <p class="muted small">
-              Uses your Claude subscription through Claude Code. Or run <code>backcourt-duo auth login</code>, or restart with <code>--auth api-key</code>.
-            </p>
+            <Show
+              when={s().agent.backend === 'opencode'}
+              fallback={
+                <>
+                  <p>{s().agent.error ?? s().agent.auth?.hint ?? 'Sign in to Claude to start the agent.'}</p>
+                  <button class="btn primary" disabled={s().agent.loginInProgress} onClick={() => void api.claudeLogin().catch((e: Error) => setError(e.message))}>
+                    {s().agent.loginInProgress ? 'Waiting for browser sign-in…' : 'Sign in with Claude'}
+                  </button>
+                  <p class="muted small">
+                    Uses your Claude subscription through Claude Code. Or run <code>backcourt-duo auth login</code>, or restart with <code>--auth api-key</code>.
+                  </p>
+                </>
+              }
+            >
+              <p>{s().agent.error ?? s().agent.auth?.hint ?? 'OpenCode is not ready.'}</p>
+              <button class="btn" onClick={() => void api.restart()}>
+                Restart agent
+              </button>
+              <p class="muted small">
+                OpenCode uses its own credentials: run <code>opencode auth login</code> in a terminal, then restart. Switch back with <code>--agent claude</code>.
+              </p>
+            </Show>
           </div>
         </Match>
         <Match when={status() === 'error' || status() === 'stopped'}>
