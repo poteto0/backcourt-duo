@@ -309,8 +309,8 @@ export class OpencodeSession implements AgentRuntime {
         this.store.setAgentSessionId(null, 'opencode');
         this.store.system('💭 The previous OpenCode conversation is gone; the next message starts a new one (the review state is intact).');
       }
-      const signIn = /not (logged in|authenticated)|auth|credential|provider/i.test(first);
-      this.fail(first || `opencode exited with code ${code}`, !signIn);
+      // Only this turn failed (an API error, a provider outage, …): the next message spawns a new `opencode run`.
+      this.fail(first || `opencode exited with code ${code}`, false);
       return;
     }
     if (turnSessionId) {

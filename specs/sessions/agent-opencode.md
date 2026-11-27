@@ -48,6 +48,8 @@ stopped（サーバー終了時）
   2. `opencode run --standalone --format json --agent duo --auto [-m <model>] [--session <id>] <prompt>` を起動する
   3. stdout の JSON イベントを 1 行ずつ読み、チャット行・使用量に反映する
   4. 子プロセスが `close` したらターン終了。`status = 'waiting'`
+  5. 子プロセスが 0 以外で終わった（API のエラーなど）ときも失敗はそのターンだけ。`⚠️ Turn ended with an error: …` を出して
+     `status = 'waiting'` にし、次のメッセージで新しい `opencode run` を起動する（`❌ Agent stopped` にはしない。#51）
 - 人間のメッセージはキューに積み、前のターンが終わってから順に流す（`POST /api/chat`）
 - **セッション ID** はイベントの `sessionID`（`ses_…`）。ターンが正常終了したときだけ保存する
   （途中で落ちたターンを次回 resume しないため）。次回のターンは `--session` で続きを開く

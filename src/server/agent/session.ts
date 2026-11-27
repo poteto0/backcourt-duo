@@ -16,6 +16,8 @@ const DEBUG = Boolean(process.env['BACKCOURT_DUO_DEBUG']);
 const CONTEXT_RESET = !/^(0|off|false)$/i.test(process.env['BACKCOURT_DUO_CONTEXT_RESET'] ?? '');
 /** Prompt size (input + cache read + cache write of the last request) at which the conversation is dropped. */
 const RESET_AT_TOKENS = 60_000;
+/** query() deaths in a row before a single message came back that are reopened before giving up with 'error'. */
+const MAX_SILENT_DEATHS = 3;
 
 interface Progress {
   phase: Phase;
@@ -83,6 +85,12 @@ export class AgentSession {
   private handoffReason: string | null = null;
   /** Cost of the query() calls dropped by resets, so the meter keeps the session total. */
   private costBase = 0;
+  /** query() deaths since the last successful turn: the first resumes, later ones start fresh with the handoff. */
+  private recoveries = 0;
+  /** query() deaths in a row with no message at all from them (a process that cannot even start): stops the reopen loop. */
+  private silentDeaths = 0;
+  /** total_cost_usd of the latest `result` of this query() (cumulative per query()). */
+  private queryCost = 0;
 
   constructor(private readonly store: ReviewStore, private readonly opts: AgentSessionOptions) {
     this.model = opts.model;
@@ -111,6 +119,8 @@ export class AgentSession {
 
     this.auth = auth;
     this.costBase = 0;
+    this.recoveries = 0;
+    this.silentDeaths = 0;
     this.handoffReason = null;
     const resume = this.store.resumeIdFor('claude');
     if (!resume && !this.store.plan) this.store.setPhase('preparing');
@@ -163,6 +173,7 @@ export class AgentSession {
     this.q = q;
     this.meter = DEBUG ? new TokenMeter() : null;
     this.contextTokens = 0;
+    this.queryCost = 0;
     this.sentMidTurn = false;
     this.progress = this.currentProgress();
     void this.pump(q, gen);
@@ -270,24 +281,52 @@ export class AgentSession {
   }
 
   private async pump(q: Query, gen: number): Promise<void> {
+    let received = false;
     try {
       for await (const m of q) {
         if (gen !== this.generation) return;
+        if (!received) {
+          received = true;
+          this.silentDeaths = 0;
+        }
         const tokens = this.meter?.observe(m);
         if (tokens) process.stderr.write(`${tokens}\n`);
         this.handle(m);
       }
-      if (gen === this.generation) this.store.setAgentStatus('stopped');
+      // Only close() ends the input, and it retires the generation: reaching here means the process went away.
+      if (gen === this.generation) this.recover('the Claude Code process exited', received);
     } catch (err) {
       if (gen !== this.generation) return;
-      this.endTurn();
-      this.fail({ text: err instanceof Error ? err.message : String(err), fatal: true });
-    } finally {
-      if (gen === this.generation) {
-        this.q = null;
-        this.input = null;
-      }
+      this.recover(err instanceof Error ? err.message : String(err), received);
     }
+  }
+
+  /**
+   * The query() died on its own (an API failure that made Claude Code exit, a crashed process, …). The review state
+   * is in the store, so open a new query() instead of leaving the session dead until a manual restart
+   * (specs/sessions/agent-session.md#query-が落ちたとき).
+   */
+  private recover(text: string, received: boolean): void {
+    this.endTurn();
+    const gen = this.close();
+    this.q = null;
+    this.input = null;
+    this.recoveries += 1;
+    if (!received) this.silentDeaths += 1;
+    if (!this.auth || looksLikeAuthError(text) || this.silentDeaths > MAX_SILENT_DEATHS) {
+      this.fail({ text, fatal: true });
+      return;
+    }
+    const firstLine = (text.split('\n')[0] ?? text).slice(0, 300);
+    // First try: resume the last completed turn. Again: the saved conversation may be what fails, so start fresh with the handoff.
+    const resume = this.recoveries === 1 ? this.store.resumeIdFor('claude') : null;
+    // Like a context reset: the dropped query()'s context fill goes, its cost carries over.
+    this.costBase += this.queryCost;
+    this.setUsage({ context: undefined, ...this.costPatch(this.costBase) });
+    this.open(this.auth, gen, resume);
+    if (!resume) this.handoffReason = 'the agent process restarted after an error';
+    this.store.setAgentStatus('waiting');
+    this.system(`⚠️ The agent stopped after an error and was reconnected (${firstLine}). Send your message again to continue.`);
   }
 
   private setUsage(patch: Partial<AgentUsage>): void {
@@ -422,8 +461,10 @@ export class AgentSession {
         this.endTurn();
         // Saved once a turn completes, not at init: a restart then never resumes a reset conversation that lacks the handoff.
         this.store.setAgentSessionId(m.session_id, 'claude');
+        this.queryCost = m.total_cost_usd;
         this.afterTurn(m.total_cost_usd);
         if (m.subtype === 'success' && !m.is_error) {
+          this.recoveries = 0;
           this.store.setAgentStatus('waiting');
           return;
         }
