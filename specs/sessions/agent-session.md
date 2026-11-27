@@ -7,7 +7,7 @@
 ## ライフサイクル
 
 ```
-starting ──▶ thinking ⇄ waiting
+starting ──▶ thinking ⇄ waiting ◀──(query が落ちたら張り直す)
    │            │
    ▼            ▼
 signed-out    error ──(restart)──▶ starting
@@ -24,6 +24,25 @@ stopped（サーバー終了時）
   引き継ぎメッセージをまだ送っていない会話を再起動時に resume しないため）
   - どのバックエンドが作った ID かも `agentSessionBackend` に保存する。Claude は `resumeIdFor('claude')` が返す ID だけを使い、
     OpenCode の `ses_…` を `resume` に渡さない（specs/sessions/agent-opencode.md#セッション）
+
+## query が落ちたとき
+
+API のエラー（500 / 529 / 429 / 接続断など）は、ふつうは `assistant.error` と `is_error` の `result` で届き、そのターンだけが失敗する
+（`⚠️ Turn ended with an error: …`、`status = 'waiting'`）。ところが Claude Code のプロセスがそのまま終了すると、`query()` の
+イテレータが `Claude Code returned an error result: API Error: …` などを投げて会話ごと止まる（#51）。
+状態の正は store にあるので、このときは手動の restart を待たずに `query()` を張り直す。
+
+- 対象: サーバーが close していないのに `query()` が終わった（例外・イテレータの終了）とき
+- サインインのエラー（`looksLikeAuthError`）は張り直さず、従来どおり `signed-out` にする
+- 張り直したら `status = 'waiting'` にし、チャットに
+  `⚠️ The agent stopped after an error and was reconnected (<エラーの 1 行目>). Send your message again to continue.` を出す。
+  失敗したメッセージは自動では送り直さない（API が落ちたままだと失敗を繰り返すため）
+- 最後に成功したターンから数えて 1 回目は、保存してあるセッション ID を `resume` する（会話が続く）。2 回目以降は resume した会話そのものが
+  原因かもしれないので `resume` を付けずに張り、次の人間メッセージに引き継ぎメッセージ（#コンテキストのリセット）を付ける
+  （理由は `the agent process restarted after an error`）。成功した `result` で回数を 0 に戻す
+- 何もメッセージを返さないまま落ちた `query()`（プロセスが起動すらできない）が 3 回続いたら、張り直しをやめて従来どおり
+  `status = 'error'`（`❌ Agent stopped: …`。UI の Restart で再開）にする。何かメッセージが届けば回数を 0 に戻す
+- 使用量はコンテキストのリセットと同じ扱い（`context` を消し、`costUSD` は落ちた `query()` の分も足し続ける）
 
 ## コンテキストのリセット
 
